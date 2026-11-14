@@ -23,6 +23,7 @@ import '../notify/notification_service.dart';
 import '../model/diary_entry.dart';
 import '../repo/demo_data.dart';
 import '../util/dates.dart';
+import 'bio_vault.dart';
 import 'crypto_session.dart';
 import 'env_check.dart';
 import 'recovery_words.dart';
@@ -65,6 +66,7 @@ class AppState {
   final bool needsName; // 存量 keystore 补设注册名（一次性）
   final String userId; // 注册名（终身不变，多设备共用）
   final String? syncError; // 最近一次同步失败（401 横幅/重试入口；null=正常）
+  final bool bioUnlock; // 面容 ID 解锁（私钥存生物识别保护的钥匙串）
   final int cfgVersion; // 标签/心情显示配置版本（变更自增，驱动 UI 重建）
 
   const AppState({
@@ -86,6 +88,7 @@ class AppState {
     this.needsName = false,
     this.userId = '',
     this.syncError,
+    this.bioUnlock = false,
     this.cfgVersion = 0,
   });
 
@@ -113,6 +116,7 @@ class AppState {
     bool clearHighlight = false,
     bool clearToast = false,
     bool clearSyncError = false,
+    bool? bioUnlock,
     int? cfgVersion,
   }) =>
       AppState(
@@ -135,6 +139,7 @@ class AppState {
         needsName: needsName ?? this.needsName,
         userId: userId ?? this.userId,
         syncError: clearSyncError ? null : (syncError ?? this.syncError),
+        bioUnlock: bioUnlock ?? this.bioUnlock,
         cfgVersion: cfgVersion ?? this.cfgVersion,
       );
 }
@@ -144,6 +149,10 @@ class AppSession extends Notifier<AppState> {
   UnlockedSession? _session;
   final _api = ApiClient();
   bool _demo = false;
+
+  /// 面容 ID 解锁桥（测试注入假实现）。
+  @visibleForTesting
+  BioVault bio = BioVaultImpl();
 
   @override
   AppState build() => const AppState();
@@ -224,6 +233,7 @@ class AppSession extends Notifier<AppState> {
       _api.setBase(customBase);
     }
     final lockEnabled = kv['ui.lock'] == '1';
+    final bioUnlock = kv['ui.bio'] == '1';
     final ks = readKeystore((k) => kv[k]);
 
     if (ks == null) {
@@ -254,6 +264,7 @@ class AppSession extends Notifier<AppState> {
         hasKeystore: true,
         demo: false,
         lockEnabled: true,
+        bioUnlock: bioUnlock,
         userId: ks.userId,
         needsName: needsName,
         theme: _themeOf(kv['ui.theme']),
@@ -269,6 +280,7 @@ class AppSession extends Notifier<AppState> {
         hasKeystore: true,
         demo: false,
         lockEnabled: false,
+        bioUnlock: bioUnlock,
         userId: ks.userId,
         needsName: needsName,
         theme: _themeOf(kv['ui.theme']),
@@ -288,6 +300,7 @@ class AppSession extends Notifier<AppState> {
         hasKeystore: true,
         demo: false,
         lockEnabled: false,
+        bioUnlock: bioUnlock,
         locked: false,
         userId: ks.userId,
         needsName: needsName,
@@ -503,6 +516,9 @@ class AppSession extends Notifier<AppState> {
     AppDefaults.tagPresets = List.of(AppDefaults.defaultTags);
     AppDefaults.moodOverrides = {};
     AppDefaults.customMoods = const [];
+    try {
+      await bio.deletePriv(); // 面容解锁的钥匙串私钥存档一并清除（平台异常不阻塞注销）
+    } catch (_) {}
     final db = _db;
     if (db != null) {
       for (final k in keystoreKvKeys) {
@@ -511,6 +527,7 @@ class AppSession extends Notifier<AppState> {
       for (final k in cfgKvKeys) {
         await db.kvRemove(k);
       }
+      await db.kvRemove('ui.bio');
       await db.kvRemove('api.token');
       await db.kvRemove('api.deviceId');
       await db.kvRemove('sync.cursor');
@@ -525,6 +542,7 @@ class AppSession extends Notifier<AppState> {
       needsName: false,
       userId: '',
       entries: [],
+      bioUnlock: false,
       clearSyncError: true,
       clearHighlight: true,
       clearToast: true,
@@ -540,6 +558,64 @@ class AppSession extends Notifier<AppState> {
       throw const FormatException('注册名最长 64 字');
     }
     return name;
+  }
+
+  // ---------- 面容 ID 解锁（私钥存生物识别保护的钥匙串，面容即解锁） ----------
+
+  /// 启用：生物识别确认 → 当前会话私钥存入钥匙串（biometryCurrentSet）。
+  /// 需已解锁（锁屏里先口令解锁一次后再到「我的」开启）。
+  Future<void> enableBioUnlock() async {
+    final s = _session;
+    if (s == null) {
+      throw StateError('请先解锁后再开启面容解锁');
+    }
+    if (!await bio.available()) {
+      throw const FormatException('本设备无可用面容/生物识别');
+    }
+    if (!await bio.authenticate('启用面容 ID 解锁你的加密日记')) {
+      throw const FormatException('生物识别未通过');
+    }
+    await bio.savePriv(b64Encode(s.privateKey));
+    await _db?.kvSet('ui.bio', '1');
+    if (!ref.mounted) return;
+    state = state.copyWith(bioUnlock: true, toast: '面容 ID 解锁已开启');
+  }
+
+  Future<void> disableBioUnlock() async {
+    await bio.deletePriv();
+    await _db?.kvSet('ui.bio', '0');
+    if (!ref.mounted) return;
+    state = state.copyWith(bioUnlock: false, toast: '面容 ID 解锁已关闭');
+  }
+
+  /// 面容解锁（LockOverlay 在生物识别通过后调用）：私钥自钥匙串直取。
+  /// 无存档（未启用/生物特征集变更失效）抛 StateError('bio-missing') → UI 回退口令。
+  Future<void> unlockBiometric() async {
+    final kv = await _db!.kvAll();
+    final ks = readKeystore((k) => kv[k]);
+    if (ks == null) {
+      throw StateError('本机无身份');
+    }
+    final privB64 = await bio.readPriv();
+    if (privB64 == null) {
+      throw StateError('bio-missing');
+    }
+    final priv = b64Decode(privB64);
+    _session = UnlockedSession(
+      keystore: ks,
+      privateKey: priv,
+      publicKey: hexDecode(ks.publicKeyHex),
+    );
+    _api.otpKey = ks.publicKeyHex;
+    if (!ref.mounted) return;
+    state = state.copyWith(locked: false);
+    await _loadLocalEntries();
+    await _ensureRegistered();
+    await syncNow();
+  }
+
+  void showToast(String msg) {
+    state = state.copyWith(toast: msg);
   }
 
   /// 同步横幅「重试」：清错误态 → 重注册 + 重同步（失败由 syncNow 重新置错）。

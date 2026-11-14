@@ -126,11 +126,28 @@ class MePage extends ConsumerWidget {
               icon: Icons.face,
               iconBg: const Color(0xFF5E5CE6),
               title: '面容 ID 解锁',
-              switchValue: state.demo ? true : false,
+              value: state.bioUnlock ? '已开启' : null,
+              valueColor: Tokens.green,
+              switchValue: state.bioUnlock,
               onSwitch: state.demo
                   ? null
-                  : (v) => showInfoDialog(context, '面容 ID 解锁',
-                      '将在真机上启用 local_auth；当前构建为调试环境。'),
+                  : (v) async {
+                      try {
+                        if (v) {
+                          await notifier.enableBioUnlock();
+                        } else {
+                          await notifier.disableBioUnlock();
+                        }
+                      } catch (e) {
+                        if (context.mounted) {
+                          showInfoDialog(
+                              context,
+                              '面容 ID 解锁',
+                              '设置失败：'
+                                  '${e.toString().replaceFirst(RegExp(r'^\w+(\([^)]*\))?: '), '')}');
+                        }
+                      }
+                    },
             ),
             IosRow(
               icon: Icons.login,

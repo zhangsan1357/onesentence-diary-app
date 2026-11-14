@@ -29,8 +29,25 @@ class _LockOverlayState extends ConsumerState<LockOverlay> {
   final _pass = TextEditingController();
   bool _showPassField = false;
   bool _busy = false;
+  bool _prompted = false; // 自动唤起面容只触发一次
   String? _error;
   Timer? _autoLockTimer;
+
+  @override
+  void initState() {
+    super.initState();
+    // 已开启面容解锁：锁屏出现即自动弹出系统 Face ID（识别通过 → 钥匙串取私钥
+    // 直接解锁，无需口令；未开启面容解锁时识别通过仍回退口令——旧语义）
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted &&
+          !_prompted &&
+          ref.read(appSessionProvider).bioUnlock &&
+          !ref.read(appSessionProvider).demo) {
+        _prompted = true;
+        _faceUnlock();
+      }
+    });
+  }
 
   @override
   void dispose() {
@@ -50,17 +67,33 @@ class _LockOverlayState extends ConsumerState<LockOverlay> {
       _toast('欢迎回来 👋');
       return;
     }
+    setState(() => _busy = true);
     try {
       final auth = LocalAuthentication();
       final ok = await auth.authenticate(
         localizedReason: '用于解锁你的加密日记',
         biometricOnly: true,
       );
-      if (ok) {
-        setState(() => _showPassField = true);
+      if (!mounted) return;
+      if (!ok) return;
+      if (state.bioUnlock) {
+        // 全量面容解锁：私钥自生物识别保护的钥匙串直取
+        await ref.read(appSessionProvider.notifier).unlockBiometric();
+        if (!mounted) return;
+        _toast('欢迎回来 👋');
+        _scheduleAutoLock();
+        return;
       }
-    } catch (_) {
       setState(() => _showPassField = true);
+    } catch (_) {
+      // 钥匙串无存档（未启用/生物特征集变更失效）或解锁链路失败 → 回退口令
+      if (!mounted) return;
+      setState(() {
+        _showPassField = true;
+        _error = '面容解锁未就绪，请使用口令解锁';
+      });
+    } finally {
+      if (mounted) setState(() => _busy = false);
     }
   }
 

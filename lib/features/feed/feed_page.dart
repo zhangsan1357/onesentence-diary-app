@@ -125,10 +125,12 @@ class _FeedPageState extends ConsumerState<FeedPage> {
     );
   }
 
-  /// 下拉刷新：增量同步（缓存为空时自动转全量重建）。
+  /// 下拉刷新：增量同步（缓存为空时自动转全量重建）+ 完成提示（同步静默时用户
+  /// 无感知，会被误以为没有下拉刷新）。
   Future<void> _refresh() async {
     try {
       await ref.read(appSessionProvider.notifier).syncNow();
+      if (mounted) ref.read(appSessionProvider.notifier).showToast('已同步 ✓');
     } catch (_) {
       // 失败进 syncError 横幅；指示器自动收回
     }
@@ -423,22 +425,24 @@ class _EntryViewState extends ConsumerState<EntryView> {
                 seconds: p.media.firstWhere((m) => m.kind == 'audio').sec ?? 0,
               ),
             ),
-          if (tags.isNotEmpty)
-            Padding(
-              padding: const EdgeInsets.only(top: 9),
-              child: Wrap(
-                spacing: 6,
-                runSpacing: 6,
-                children: [for (final t in tags) TagChip(t)],
-              ),
-            ),
-          // 脚注：心情 + 评论徽标（0 条不显示数字）
+          // post-actions（mockup .post-actions space-between）：标签/心情在左，评论按钮在右
           Padding(
             padding: const EdgeInsets.only(top: 10),
             child: Row(
               children: [
-                MoodEmoji(moodKey: p.mood),
+                Expanded(
+                  child: Wrap(
+                    spacing: 6,
+                    runSpacing: 6,
+                    crossAxisAlignment: WrapCrossAlignment.center,
+                    children: [
+                      MoodEmoji(moodKey: p.mood),
+                      for (final t in tags) TagChip(t),
+                    ],
+                  ),
+                ),
                 const SizedBox(width: 8),
+                // 评论徽标（0 条不显示数字）
                 Material(
                   color: Tokens.fill(b),
                   borderRadius: BorderRadius.circular(14),
