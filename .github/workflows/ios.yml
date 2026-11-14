@@ -12,7 +12,9 @@ jobs:
   build:
     runs-on: macos-latest
     steps:
-      - uses: actions/checkout@v4
+      # checkout v5 / upload-artifact v6：node24 运行时，消除「Node.js 20 is deprecated」警告
+      # （该警告本不阻塞构建；flutter-action v2 尚无 node24 版，被强制跑在 node24 上属预期）
+      - uses: actions/checkout@v5
       - uses: subosito/flutter-action@v2
         with:
           flutter-version: 3.44.8
@@ -42,7 +44,7 @@ jobs:
           cp -R Runner.app Payload/
           zip -qry diary.ipa Payload
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v6
         with:
           name: diary-ipa-${{ github.sha }}
           path: build/ios/iphoneos/diary.ipa
