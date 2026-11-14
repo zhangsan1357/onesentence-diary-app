@@ -105,6 +105,7 @@
 2. **workflow 合并**（`.github/workflows/ios.yml`）：保留本工程的 `flutter test` 门禁与 **Payload→diary.ipa 规范打包**（Sideloadly 直收），触发/Runner/Xcode 选择改用旧工程实证配置；Xcode 26.6.0 缺失时回落镜像默认版不阻塞。
 3. **补齐 `ios/Podfile`**（关键缺口）：本工程含 10+ 原生插件（image_picker/audio_waveforms/flutter_local_notifications/local_auth/share_plus/path_provider/sqlite3_flutter_libs），无 Podfile 时 CI 的 pod install 无从执行、插件不链接；旧工程缺失此文件（其插件仅 http/shared_preferences）。按 flutter create 模板落位（platform 13.0 与 pbxproj 一致，含 RunnerTests target）。
 4. **git 初始化**：`git init -b main` + 初始提交 `5719d35`（107 文件；build/.dart_tool/.idea/sqlite3.dll 均按 .gitignore 排除——tool/bin/sqlite3.dll 已入库供 Windows 测试用）。push 需用户在 GitHub 建仓库并登录授权（本机 8 月曾 push 过旧工程，凭据管理器大概率已存）。
+5. **CI 首跑两处修正（用户推送后实测）**：①Node 20 弃用警告非报错——仍升级 `actions/checkout@v5` + `actions/upload-artifact@v6`（node24 运行时；flutter-action v2 尚无 node24 版，被强制属预期）；②`pod install` 真报错 `undefined flutter_ios_podspec_setup`——我凭记忆写的Podfile 方法名有误，3.44.8 实际是 **`flutter_ios_podfile_setup`**（本地 Flutter 安装 `templates/cocoapods/Podfile-ios` 原版模板逐字拷贝修正，`b020a1f`）。旁证：日志已跑到 pod install（pub get/SPM 插件解析都过了）；3.44 的 ios 模板不再自带 Podfile（SPM 默认），audio_waveforms 不支持 SPM 回退 pods——这正是必须手动落位 Podfile 的原因。
 
 ## 测试清单（`flutter test` 73 项全绿；后端未启动时 live 14 项自动 SKIP）
 
