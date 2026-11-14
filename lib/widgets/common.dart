@@ -131,17 +131,20 @@ class _GlowDayCardState extends State<GlowDayCard> {
   }
 }
 
-/// 标签 chip：`#名字`，颜色 = 8 色稳定哈希，底色 = 色 22 alpha。
+/// 标签 chip：`#名字`，颜色 = 8 色稳定哈希（传入 seed 时 = 标签名+正文动态色），
+/// 底色 = 色 22 alpha。
 class TagChip extends StatelessWidget {
   final String name;
+  final String? seed; // 动态色种子（正文）：同一标签在不同条目呈现不同颜色
   final VoidCallback? onDelete;
   final bool compact;
 
-  const TagChip(this.name, {super.key, this.onDelete, this.compact = false});
+  const TagChip(this.name,
+      {super.key, this.onDelete, this.compact = false, this.seed});
 
   @override
   Widget build(BuildContext context) {
-    final c = AppDefaults.tagColor(name);
+    final c = AppDefaults.tagColorOf(name, seed: seed);
     return Container(
       padding: compact
           ? const EdgeInsets.symmetric(horizontal: 9, vertical: 4)

@@ -1,6 +1,9 @@
 // 时光流：天卡片（8 色光晕）+ 段首缩进条目 + 长文折叠 + 九宫格 + 评论懒加载。
+import 'dart:math' as math;
 import 'dart:ui' show PointerDeviceKind;
 
+import 'package:flutter/cupertino.dart'
+    show CupertinoSliverRefreshControl, RefreshIndicatorMode;
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
@@ -47,22 +50,29 @@ class _FeedPageState extends ConsumerState<FeedPage> {
     final hl = state.highlightDate;
     final hlKey = hl == null ? null : Dates.date(hl);
 
-    return RefreshIndicator(
-      onRefresh: _refresh,
-      // 浏览器调试：默认 ScrollBehavior 不响应鼠标拖拽，放开后下拉可用
-      child: ScrollConfiguration(
-        behavior: ScrollConfiguration.of(context).copyWith(
-          dragDevices: {
-            PointerDeviceKind.touch,
-            PointerDeviceKind.mouse,
-            PointerDeviceKind.stylus,
-            PointerDeviceKind.trackpad,
-          },
-        ),
-        child: CustomScrollView(
-          controller: _scroll,
-          slivers: [
-        SliverToBoxAdapter(
+    return // 浏览器调试：默认 ScrollBehavior 不响应鼠标拖拽，放开后下拉可用
+        ScrollConfiguration(
+      behavior: ScrollConfiguration.of(context).copyWith(
+        dragDevices: {
+          PointerDeviceKind.touch,
+          PointerDeviceKind.mouse,
+          PointerDeviceKind.stylus,
+          PointerDeviceKind.trackpad,
+        },
+      ),
+      child: CustomScrollView(
+        controller: _scroll,
+        // 弹性物理：顶部过拉露出刷新头（真机 iOS 默认弹性；web/桌面强制开启）
+        physics: const BouncingScrollPhysics(parent: AlwaysScrollableScrollPhysics()),
+        slivers: [
+          // 自定义下拉刷新头：拉距控箭头旋转 → 松手转圈「正在刷新…」→「已同步 ✓」
+          CupertinoSliverRefreshControl(
+            refreshTriggerPullDistance: 90,
+            refreshIndicatorExtent: 60,
+            onRefresh: _refresh,
+            builder: _refreshHeader,
+          ),
+          SliverToBoxAdapter(
           child: Padding(
             padding: const EdgeInsets.fromLTRB(18, 64, 18, 0),
             child: Row(
@@ -121,7 +131,6 @@ class _FeedPageState extends ConsumerState<FeedPage> {
         const SliverToBoxAdapter(child: SizedBox(height: 8)),
           ],
         ),
-      ),
     );
   }
 
@@ -139,6 +148,68 @@ class _FeedPageState extends ConsumerState<FeedPage> {
   /// 横幅「重试」：清错误态 → 重注册 + 重同步（内部吞错，失败重新亮横幅）。
   Future<void> _refreshError() async {
     await ref.read(appSessionProvider.notifier).retrySync();
+  }
+
+  /// 下拉刷新头（仿原生）：下拉时箭头随拉距旋转（朝下→朝上），超过触发距离变蓝；
+  /// 松手后转圈 + 「正在刷新…」；完成后 ✓ + 「已同步 ✓」随头部收回淡出。
+  Widget _refreshHeader(
+    BuildContext context,
+    RefreshIndicatorMode state,
+    double pulledExtent,
+    double refreshTriggerPullDistance,
+    double refreshIndicatorExtent,
+  ) {
+    final b = Theme.of(context).brightness;
+    final t = (pulledExtent / refreshTriggerPullDistance).clamp(0.0, 1.0);
+    final appear = (pulledExtent / 48).clamp(0.0, 1.0);
+
+    final Widget content = switch (state) {
+      RefreshIndicatorMode.drag || RefreshIndicatorMode.armed => Transform.rotate(
+          angle: (1 - t) * math.pi, // 0=朝下 → 1=朝上（松手即刷新）
+          child: Icon(
+            Icons.arrow_downward,
+            size: 20,
+            color: state == RefreshIndicatorMode.armed
+                ? Tokens.blue(b)
+                : Tokens.label2(b),
+          ),
+        ),
+      RefreshIndicatorMode.refresh => Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            SizedBox(
+              width: 16,
+              height: 16,
+              child: CircularProgressIndicator(
+                strokeWidth: 2.2,
+                color: Tokens.blue(b),
+                backgroundColor: Tokens.fill(b),
+              ),
+            ),
+            const SizedBox(width: 9),
+            Text('正在刷新…',
+                style: TextStyle(fontSize: 12.5, color: Tokens.label2(b))),
+          ],
+        ),
+      RefreshIndicatorMode.done => Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(Icons.check_circle_outline,
+                size: 16, color: Tokens.green),
+            const SizedBox(width: 7),
+            Text('已同步 ✓',
+                style: TextStyle(fontSize: 12.5, color: Tokens.label2(b))),
+          ],
+        ),
+      _ => const SizedBox.shrink(),
+    };
+
+    return Center(
+      child: Opacity(
+        opacity: appear,
+        child: content,
+      ),
+    );
   }
 
   Widget _todayEmpty(Brightness b) {
@@ -437,7 +508,7 @@ class _EntryViewState extends ConsumerState<EntryView> {
                     crossAxisAlignment: WrapCrossAlignment.center,
                     children: [
                       MoodEmoji(moodKey: p.mood),
-                      for (final t in tags) TagChip(t),
+                      for (final t in tags) TagChip(t, seed: p.text),
                     ],
                   ),
                 ),

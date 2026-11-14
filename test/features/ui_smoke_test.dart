@@ -64,6 +64,21 @@ void main() {
     expect(find.text('展开全文'), findsWidgets);
   });
 
+  testWidgets('feed：下拉刷新头——拖拽出现箭头（仿原生：拉距旋转→松手转圈→已同步）',
+      (tester) async {
+    await _pumpHome(tester);
+    final gesture = await tester.startGesture(const Offset(200, 400));
+    await gesture.moveBy(const Offset(0, 50));
+    await tester.pump();
+    await gesture.moveBy(const Offset(0, 60)); // 越过触发距离 90 → armed
+    await tester.pump();
+    expect(find.byIcon(Icons.arrow_downward), findsOneWidget,
+        reason: '拖拽阶段应显示旋转箭头');
+    await gesture.up();
+    await tester.pump();
+    await tester.pumpAndSettle(); // demo 同步即时完成 → 刷新头收回
+  });
+
   testWidgets('日历：翻月 + 休班徽章 + 统计', (tester) async {
     await _pumpHome(tester);
     await tester.tap(find.byIcon(Icons.calendar_month_outlined),

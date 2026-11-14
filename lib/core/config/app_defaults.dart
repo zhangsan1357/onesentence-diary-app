@@ -31,10 +31,17 @@ class AppDefaults {
   };
 
   /// 同名标签永远同色（JS 32 位溢出语义模拟）。
-  static String tagColorName(String name) {
+  static String tagColorName(String name) => _hashColorName(name);
+
+  /// 动态色（2026-11-14 用户拍板）：哈希种子 = 标签名 + 正文 → 同一标签在不同
+  /// 条目呈现不同颜色（覆盖 01 §6「同名永远同色」原约定）。调色板覆盖仍优先。
+  static String tagColorSeeded(String name, String seed) =>
+      _hashColorName(name + seed);
+
+  static String _hashColorName(String s) {
     var h = 0;
-    for (var i = 0; i < name.length; i++) {
-      final cc = name.codeUnitAt(i);
+    for (var i = 0; i < s.length; i++) {
+      final cc = s.codeUnitAt(i);
       // JS: h = charCode + ((h << 5) - h)   —— 全程按 32 位有符号截断
       h = _toInt32(cc) + _toInt32((_toInt32(h << 5)) - h);
       h = _toInt32(h);
@@ -50,12 +57,19 @@ class AppDefaults {
   /// 用户标签库（标签管理增删改查；初始 = defaultTags 三项，KV 持久化后整体替换）。
   static List<String> tagPresets = defaultTags;
 
-  static Color tagColor(String name) {
+  /// 取标签显示色：调色板覆盖 > 名字哈希。
+  static Color tagColor(String name) => _colorByOverrideOr(name, () => tagColorName(name));
+
+  /// 取标签显示色（动态）：调色板覆盖 > 标签名+正文哈希。
+  static Color tagColorOf(String name, {String? seed}) =>
+      _colorByOverrideOr(name, () => seed == null ? tagColorName(name) : tagColorSeeded(name, seed));
+
+  static Color _colorByOverrideOr(String name, String Function() fallback) {
     final cn = tagColorOverrides[name];
     if (cn != null && tagColorHex.containsKey(cn)) {
       return Color(tagColorHex[cn]!);
     }
-    return Color(tagColorHex[tagColorName(name)]!);
+    return Color(tagColorHex[fallback()]!);
   }
 
   static int _toInt32(int x) => x.toSigned(32);

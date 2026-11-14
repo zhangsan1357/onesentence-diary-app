@@ -4,6 +4,7 @@
 //            function tagColor(t){var h=0;for(var i=0;i<t.length;i++){h=t.charCodeAt(i)+((h<<5)-h)}
 //            h=Math.abs(h);return TCN[h%TCN.length]}"
 import 'package:diary_app/core/config/app_defaults.dart';
+import 'package:flutter/material.dart' show Color;
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
@@ -32,5 +33,20 @@ void main() {
 
   test('同色稳定性：同名重复调用结果一致', () {
     expect(AppDefaults.tagColorName('工作'), AppDefaults.tagColorName('工作'));
+  });
+
+  test('动态色（2026-11-14 用户拍板）：标签名+正文哈希 → 同标签异条目变色', () {
+    // 确定性
+    expect(AppDefaults.tagColorSeeded('吐槽', '今天写了一句话'),
+        AppDefaults.tagColorSeeded('吐槽', '今天写了一句话'));
+    // 同标签、不同正文 → 颜色不同（抽样向量实测异色）
+    final a = AppDefaults.tagColorSeeded('吐槽', '今天又开了三个小时的会');
+    final b = AppDefaults.tagColorSeeded('吐槽', '加班到十一点，窗外的雨一直没停');
+    expect(a, isNot(b), reason: '不同条目的同一标签应呈不同颜色');
+    // 调色板覆盖优先于动态色
+    AppDefaults.tagColorOverrides['吐槽'] = 'pink';
+    expect(AppDefaults.tagColorOf('吐槽', seed: '任意正文'),
+        const Color(0xFFFF2D55));
+    AppDefaults.tagColorOverrides.remove('吐槽');
   });
 }

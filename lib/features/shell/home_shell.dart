@@ -135,28 +135,28 @@ class _TabBar extends ConsumerWidget {
             children: [
               item(HomeTab.feed, Icons.access_time, '时光'),
               item(HomeTab.cal, Icons.calendar_month_outlined, '日历'),
-              // 中央凸起发布键
-              Container(
-                margin: const EdgeInsets.only(top: 20),
+              // 中央发布键：与左右图标同一视觉线（此前 margin-top 20 导致偏下 10px），
+              // 直径加大 + 重阴影突出
+              SizedBox(
                 width: 70,
                 child: Center(
                   child: GestureDetector(
                     onTap: onFab,
                     child: Container(
-                      width: 52,
-                      height: 52,
+                      width: 58,
+                      height: 58,
                       decoration: BoxDecoration(
                         shape: BoxShape.circle,
                         color: Tokens.blue(b),
                         boxShadow: [
                           BoxShadow(
-                            color: Tokens.blue(b).withValues(alpha: .45),
-                            blurRadius: 20,
-                            offset: const Offset(0, 8),
+                            color: Tokens.blue(b).withValues(alpha: .5),
+                            blurRadius: 24,
+                            offset: const Offset(0, 9),
                           ),
                         ],
                       ),
-                      child: const Icon(Icons.edit, color: Colors.white, size: 23),
+                      child: const Icon(Icons.edit, color: Colors.white, size: 26),
                     ),
                   ),
                 ),

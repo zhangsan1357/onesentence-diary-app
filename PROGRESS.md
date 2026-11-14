@@ -7,7 +7,7 @@
 
 | 里程碑 | 状态 | 证据 |
 |---|---|---|
-| M2-a 工程 + golden 常绿 | ✅ 完成 | `flutter test` 77 项全绿（含 golden 向量；live 14 项后端在跑时执行）；`flutter analyze` 零问题 |
+| M2-a 工程 + golden 常绿 | ✅ 完成 | `flutter test` 79 项全绿（含 golden 向量；live 14 项后端在跑时执行）；`flutter analyze` 零问题 |
 | M2-b UI 全页面对照 mockup v2 | ✅ 完成 | Chrome 实测截图逐页对照（见下「视觉对照」）；像素采样自测通过 |
 | M3 客户端接后端 | ✅ 完成（2026-11-13；2026-11-14 随后端 v4 重验） | `flutter test test/live/` **14/14 全绿**：原 11 项回归 + 新增 M3-12 动态口令（错口令→401「动态口令」壳）、M3-13 多设备共享（同注册名+同密钥+新设备号→数据互通，②的服务端语义验收）、M3-14 冒名拒绝（同注册名异密钥→404）。M3-1~9 全程隐式回归 X-Diary-Pass 口令头（拦截器计算，公式对活后端 curl 实测） |
 | M4-a GitHub Actions 出 ipa | 🔧 本地就绪，待 push | git 仓库已初始化（main，5719d35）；`ios.yml` 合并旧工程 dvhdjdjdnddmaker/test 实证配置（macos-latest + Xcode 26.6.0 选择带回落）；补齐 `ios/Podfile`（原生插件 pod install 必需，旧工程缺失项）；待用户在 GitHub 建仓库并 push（需用户登录授权） |
@@ -115,7 +115,14 @@
 4. **面容 ID 全量解锁（本夜核心）**：用户确认「面容解锁后还要输密码」根因——原实现 Face ID 只是先验身份，解锁仍靠 Argon2id(口令)（私钥被口令包裹）。按用户拍板增补 **flutter_secure_storage ^11.2.0**（此前悬置的依赖决策）：新建 [bio_vault.dart](lib/core/session/bio_vault.dart)——私钥 b64 存 iOS Keychain（**AccessControlFlag.biometryCurrentSet**，生物特征集变更自动失效）+ local_auth 探测/验证；AppSession 增 `enableBioUnlock/disableBioUnlock/unlockBiometric`（ui.bio KV + AppState.bioUnlock）；LockOverlay **锁屏出现即自动弹 Face ID**，识别通过 → 钥匙串取私钥直建会话（**免口令**），钥匙串无存档/失败回退口令路径；我的页面容开关真绑定（web/桌面 available=false → 提示真机可用）；注销清除钥匙串存档。**注意**：更换口令（rekey）不影响面容解锁（存的是私钥非口令派生物）。
 5. 测试：+4 项 bio 流程（假 BioVault 注入：启用入库/锁定后面容免口令解锁/bio-missing 回退信号/拒绝启用/关闭清除/注销清除）；全量 **77 项绿** + analyze 零告警 + web 构建通过。
 
-## 测试清单（`flutter test` 77 项全绿；后端未启动时 live 14 项自动 SKIP）
+## 2026-11-15（凌晨）下拉刷新动画 + 标签动态色 + 发布键居中凸起
+
+1. **下拉刷新动画（仿原生）**（[feed_page.dart](lib/features/feed/feed_page.dart)）：Material RefreshIndicator 换成 **CupertinoSliverRefreshControl + 自绘头**——下拉时箭头随拉距旋转（朝下→朝上，越过触发距离 90 变蓝），松手转圈 + 「正在刷新…」，完成 ✓ + 「已同步 ✓」随头部收回淡出（另有底部 toast 兜底反馈）。物理改 `BouncingScrollPhysics(parent: AlwaysScrollable)` 强制顶部过拉（真机 iOS 天然弹性，web/桌面同步开启）。**媒体渲染（真实图片下载解密显示/录音播放）按用户拍板暂缓不动**——时光流图片仍为占位图标、录音条仍不可播。
+2. **标签动态色（用户拍板，覆盖 01 §6「同名永远同色」）**（[app_defaults.dart](lib/core/config/app_defaults.dart) + [common.dart](lib/widgets/common.dart)）：哈希种子改为 **标签名+正文**——同一标签在不同条目呈现不同颜色（`tagColorSeeded`/`tagColorOf(seed:)`，TagChip 增 `seed` 参数，feed 传正文）。用户调色板覆盖仍最优先；标签管理/撰写页建议 chips 仍走纯名字哈希（避免随草稿抖动）。JS 32 位溢出语义与黄金向量不变（新增动态色确定性+异色+覆盖优先断言）。
+3. **发布键居中凸起**（[home_shell.dart](lib/features/shell/home_shell.dart)）：去掉 margin-top 20（此前圆钮中心比左右 tab 图标低 10px，观感"沉底"）→ 与左右图标同一视觉线；直径 52→58、图标 23→26、阴影加重（真机反馈"偏下、希望比左右大、突出"）。
+4. 测试：**79 项全绿**（新增 下拉刷新头拖拽箭头断言 + 动态色断言）+ analyze 零告警 + web 构建通过；后端被会话 A 重启致开发数据清空（身份仍可重登，属后端侧）。
+
+## 测试清单（`flutter test` 79 项全绿；后端未启动时 live 14 项自动 SKIP）
 
 - **golden 向量 9 项**（`test/core/e2ee/golden_test.dart`，02 §7 固化向量）：Argon2id masterKey、X25519 公钥推导（clamp）、sharedSecret、HKDF encKey、92B EncryptedCEK 字节布局、AES-GCM cipher+tag 布局、完整 JSON fixture 解密、确定性加密复现完整 JSON、随机往返。**一次实现全绿**，Dart 端与 Go 参考实现逐字节互通。
 - **恢复词 7 项**（`test/core/session/recovery_words_test.dart`）：BIP39 黄金向量（熵全 0 短语+seed，Node 互证）、生成多轮校验、抄写错误四类拒绝（换词/缺词/词表外/错序）、空白归一化、hex 判定、**diaryPass 动态口令向量（活后端实测）+窗口边界**。
@@ -123,7 +130,7 @@
 - **身份流程 7 项**（`test/core/session/identity_flow_test.dart`）：createIdentity 落盘/校验失败不留痕/注册名 gate、loginIdentity 同词同公钥（跨设备等价）/词校验拒绝、存量补设注册名（deviceNo 保留）、**注销账号（KV 全清 + 状态回引导 + 原词可重登）**。MemoryLocalStore 注入（debugUseStore/debugRestorePlainSession 钩子）。
 - **面容解锁 4 项**（`test/core/session/bio_unlock_test.dart`）：启用（生物识别确认 → 私钥入库 + ui.bio）、锁定后面容免口令解锁（bio-missing 回退信号 + 口令回退仍可用）、拒绝启用（识别未过/设备不可用）+ 关闭清除、注销清除钥匙串存档。FakeBioVault 注入。
 - **core 单测 8 项**：tagColor 哈希与 JS 参考实现一致、payload 序列化往返、容错解码、天分组、调休合并/说明行/命中。
-- **UI 冒烟 17 项**（390×844 手机视口）：feed 渲染/折叠/日历/回忆/我的页全行/发布流（标签 chips 点选）/TagChip/标签管理回归/**标签调色板改色（粉→0xFFFF2D55 断言）+ 心情管理列表**/长按编辑/主题三档/**onboarding（12 宫格优先+随机生成+黄金向量提交）/401 横幅**/**ToastHost 3 项**。
+- **UI 冒烟 18 项**（390×844 手机视口）：feed 渲染/折叠/**下拉刷新头拖拽箭头**/日历/回忆/我的页全行/发布流（标签 chips 点选）/TagChip/标签管理回归/**标签调色板改色（粉→0xFFFF2D55 断言）+ 心情管理列表**/长按编辑/主题三档/**onboarding（12 宫格优先+随机生成+黄金向量提交）/401 横幅**/**ToastHost 3 项**。
 - **显示配置 4 项**（`test/core/session/display_cfg_test.dart`）：标签库增删（初始含默认三项）+ KV 重载（'[]' 空库语义）、调色板覆盖/恢复自动/非法色名忽略、心情增删改（默认仅改显示）+ KV 重载、cfgVersion 自增。MemoryLocalStore 注入 + debugLoadCfg 钩子；静态表 setUp/tearDown 复位防污染。
 - **光晕像素采样 2 项**（`test/features/glow_pixel_test.dart`；深色期望改为可见 Δ≥4 ≤48——用户覆盖原版 0.15）。
 - **live 集成 14 项**（`test/live/integration_live_test.dart`）：原 11 项回归（全程隐式验证 X-Diary-Pass）+ M3-12 动态口令 401 + M3-13 多设备共享 + M3-14 冒名拒绝。**2026-11-14 后端 v4 实测 14/14 全绿**（未启动自动 SKIP）。
