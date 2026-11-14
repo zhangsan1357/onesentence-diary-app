@@ -28,12 +28,25 @@ class FeedPage extends ConsumerStatefulWidget {
 
 class _FeedPageState extends ConsumerState<FeedPage> {
   final _scroll = ScrollController();
-
+  final _searchCtrl = TextEditingController();
+  bool _searchOpen = false;
+  String _kw = '';
 
   @override
   void dispose() {
     _scroll.dispose();
+    _searchCtrl.dispose();
     super.dispose();
+  }
+
+  void _toggleSearch() {
+    setState(() {
+      _searchOpen = !_searchOpen;
+      if (!_searchOpen) {
+        _kw = '';
+        _searchCtrl.clear();
+      }
+    });
   }
 
   @override
@@ -42,7 +55,21 @@ class _FeedPageState extends ConsumerState<FeedPage> {
     final state = ref.watch(appSessionProvider);
     final today = Dates.date(DateTime.now());
 
-    final groups = groupByDay(state.entries);
+    // 关键词搜索（01 §7：明文索引端上做）：正文/标签包含即命中（大小写不敏感）
+    final kw = _kw.trim().toLowerCase();
+    final searching = kw.isNotEmpty;
+    final visible = searching
+        ? state.entries.where((e) {
+            final p = e.payload;
+            if (p.text.toLowerCase().contains(kw)) return true;
+            for (final t in p.tags) {
+              if (t.toLowerCase().contains(kw)) return true;
+            }
+            return false;
+          }).toList()
+        : state.entries;
+
+    final groups = groupByDay(visible);
     final hasToday =
         groups.any((g) => g.key == today && g.value.isNotEmpty);
 
@@ -84,30 +111,29 @@ class _FeedPageState extends ConsumerState<FeedPage> {
                         fontWeight: FontWeight.w800,
                         letterSpacing: -.4,
                         color: Tokens.label(b))),
-                if (state.lockEnabled)
-                  GestureDetector(
-                    onTap: () =>
-                        ref.read(appSessionProvider.notifier).lock(),
-                    child: Container(
-                      width: 34,
-                      height: 34,
-                      decoration: BoxDecoration(
-                          color: Tokens.fill(b), shape: BoxShape.circle),
-                      child: Icon(Icons.lock_outline,
-                          size: 16, color: Tokens.label(b)),
-                    ),
-                  ),
+                Row(children: [
+                  _iconBtn(b, Icons.search_outlined, _toggleSearch),
+                  if (state.lockEnabled) ...[
+                    const SizedBox(width: 10),
+                    _iconBtn(b, Icons.lock_outline,
+                        () => ref.read(appSessionProvider.notifier).lock()),
+                  ],
+                ]),
               ],
             ),
           ),
         ),
+        if (_searchOpen)
+          SliverToBoxAdapter(child: _searchBar(b)),
         const SliverToBoxAdapter(child: SizedBox(height: 14)),
         if (state.syncError != null)
           SliverToBoxAdapter(
             child: _SyncErrorBanner(
                 message: state.syncError!, onRetry: _refreshError),
           ),
-        if (!hasToday)
+        if (searching && groups.isEmpty)
+          SliverToBoxAdapter(child: _noResult(b)),
+        if (!searching && !hasToday)
           SliverToBoxAdapter(child: _todayEmpty(b)),
         SliverList.builder(
           itemCount: groups.length,
@@ -228,6 +254,87 @@ class _FeedPageState extends ConsumerState<FeedPage> {
         ],
       ),
       child: Text('今天还没写点什么',
+          style: TextStyle(fontSize: 14, color: Tokens.label2(b))),
+    );
+  }
+
+  /// 标题行圆钮（搜索 / 锁定）。
+  Widget _iconBtn(Brightness b, IconData icon, VoidCallback onTap) {
+    return GestureDetector(
+      onTap: onTap,
+      child: Container(
+        width: 34,
+        height: 34,
+        decoration: BoxDecoration(
+            color: Tokens.fill(b), shape: BoxShape.circle),
+        child: Icon(icon, size: 17, color: Tokens.label(b)),
+      ),
+    );
+  }
+
+  /// 搜索条：实时过滤（正文/标签，大小写不敏感），× 清空。
+  Widget _searchBar(Brightness b) {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(14, 10, 14, 0),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 12),
+        decoration: BoxDecoration(
+          color: Tokens.card(b),
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(color: Tokens.sep(b)),
+        ),
+        child: Row(
+          children: [
+            Icon(Icons.search, size: 16, color: Tokens.label3(b)),
+            const SizedBox(width: 8),
+            Expanded(
+              child: TextField(
+                controller: _searchCtrl,
+                autofocus: true,
+                style: TextStyle(fontSize: 14, color: Tokens.label(b)),
+                decoration: InputDecoration(
+                  hintText: '搜索关键词（正文 / 标签）',
+                  hintStyle: TextStyle(
+                      fontSize: 13, color: Tokens.label3(b)),
+                  border: InputBorder.none,
+                  isDense: true,
+                  contentPadding:
+                      const EdgeInsets.symmetric(vertical: 11),
+                ),
+                onChanged: (v) => setState(() => _kw = v),
+              ),
+            ),
+            if (_kw.isNotEmpty)
+              GestureDetector(
+                onTap: () {
+                  _searchCtrl.clear();
+                  setState(() => _kw = '');
+                },
+                child: Icon(Icons.close,
+                    size: 16, color: Tokens.label3(b)),
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _noResult(Brightness b) {
+    return Container(
+      margin: const EdgeInsets.fromLTRB(14, 6, 14, 14),
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 15),
+      decoration: BoxDecoration(
+        color: Tokens.card(b),
+        borderRadius: BorderRadius.circular(14),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: .05),
+            blurRadius: 2,
+            offset: const Offset(0, 1),
+          ),
+        ],
+      ),
+      child: Text('没有找到「$_kw」',
           style: TextStyle(fontSize: 14, color: Tokens.label2(b))),
     );
   }

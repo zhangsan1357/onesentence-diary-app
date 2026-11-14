@@ -79,6 +79,35 @@ void main() {
     await tester.pumpAndSettle(); // demo 同步即时完成 → 刷新头收回
   });
 
+  testWidgets('feed：关键词搜索（正文/标签命中 + 无结果态 + 关闭还原）', (tester) async {
+    await _pumpHome(tester);
+    await tester.tap(find.byIcon(Icons.search_outlined), warnIfMissed: false);
+    await tester.pumpAndSettle();
+    // 正文命中：光棍节（11-11 那条）→ 其余条目不再显示
+    await tester.enterText(
+        find.widgetWithText(TextField, '搜索关键词（正文 / 标签）'), '光棍节');
+    await tester.pumpAndSettle();
+    expect(find.textContaining('光棍节'), findsWidgets);
+    expect(find.textContaining('多肉'), findsNothing);
+    // 标签命中：摄影（11-08 那条正文是多肉换盆，仅标签含摄影）
+    await tester.enterText(
+        find.widgetWithText(TextField, '搜索关键词（正文 / 标签）'), '摄影');
+    await tester.pumpAndSettle();
+    expect(find.textContaining('多肉'), findsWidgets);
+    // 无结果态
+    await tester.enterText(
+        find.widgetWithText(TextField, '搜索关键词（正文 / 标签）'), '不存在的词xyz');
+    await tester.pumpAndSettle();
+    expect(find.textContaining('没有找到'), findsOneWidget);
+    // 清空 + 关闭搜索 → 还原全量（断言首屏内的卡片；懒加载列表折叠线下不构建）
+    await tester.tap(find.byIcon(Icons.close), warnIfMissed: false);
+    await tester.pumpAndSettle();
+    expect(find.textContaining('烤红薯'), findsWidgets);
+    await tester.tap(find.byIcon(Icons.search_outlined), warnIfMissed: false);
+    await tester.pumpAndSettle();
+    expect(find.widgetWithText(TextField, '搜索关键词（正文 / 标签）'), findsNothing);
+  });
+
   testWidgets('日历：翻月 + 休班徽章 + 统计', (tester) async {
     await _pumpHome(tester);
     await tester.tap(find.byIcon(Icons.calendar_month_outlined),
