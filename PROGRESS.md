@@ -10,7 +10,7 @@
 | M2-a 工程 + golden 常绿 | ✅ 完成 | `flutter test` 73 项全绿（含 golden 向量；live 14 项后端在跑时执行）；`flutter analyze` 零问题 |
 | M2-b UI 全页面对照 mockup v2 | ✅ 完成 | Chrome 实测截图逐页对照（见下「视觉对照」）；像素采样自测通过 |
 | M3 客户端接后端 | ✅ 完成（2026-11-13；2026-11-14 随后端 v4 重验） | `flutter test test/live/` **14/14 全绿**：原 11 项回归 + 新增 M3-12 动态口令（错口令→401「动态口令」壳）、M3-13 多设备共享（同注册名+同密钥+新设备号→数据互通，②的服务端语义验收）、M3-14 冒名拒绝（同注册名异密钥→404）。M3-1~9 全程隐式回归 X-Diary-Pass 口令头（拦截器计算，公式对活后端 curl 实测） |
-| M4-a GitHub Actions 出 ipa | 🔧 物料就绪 | `.github/workflows/ios.yml` 按 03 §4.1 全文落位；待建 GitHub 仓库并 push（需用户操作） |
+| M4-a GitHub Actions 出 ipa | 🔧 本地就绪，待 push | git 仓库已初始化（main，5719d35）；`ios.yml` 合并旧工程 dvhdjdjdnddmaker/test 实证配置（macos-latest + Xcode 26.6.0 选择带回落）；补齐 `ios/Podfile`（原生插件 pod install 必需，旧工程缺失项）；待用户在 GitHub 建仓库并 push（需用户登录授权） |
 | M4-b Sideloadly 真机 | ⏳ 等待 M4-a | 依赖 ipa + 用户插线（USB 驱动缺失，04 §3.2） |
 | M5 真机回归 | ⏳ | 依赖 M4-b |
 
@@ -98,6 +98,13 @@
 
 - 深色卡片光晕**清晰可见**（右上蓝色渐变铺满卡面）✓；日历双休红 ✓；回忆翻真实条目 ✓；123 两条数据完好
 - IAB 环境后段再次进入点击死锁周期（坐标点击/tab 均不触发，与上轮怪癖一致）；标签/心情弹层与引导页宫格的浏览器走查改由 widget 测试全量覆盖（改色→粉色断言、默认 6 心情+新增入口、随机生成→密钥→黄金向量提交）
+
+## 2026-11-14（夜 4）GitHub 云编译准备（M4-a 本地侧完成）
+
+1. **找到旧工程**：`E:\env\java\workspace\test`（2026-08 的 Flutter 试验工程）→ 远程 `github.com/dvhdjdjdnddmaker/test`，`.github/workflows/ios_build.yml` 为当年实证配置（macos-latest + `ls /Applications/Xcode*` 排查 + `sudo xcode-select Xcode_26.6.0` + build ios --no-codesign + zip Runner.app）。
+2. **workflow 合并**（`.github/workflows/ios.yml`）：保留本工程的 `flutter test` 门禁与 **Payload→diary.ipa 规范打包**（Sideloadly 直收），触发/Runner/Xcode 选择改用旧工程实证配置；Xcode 26.6.0 缺失时回落镜像默认版不阻塞。
+3. **补齐 `ios/Podfile`**（关键缺口）：本工程含 10+ 原生插件（image_picker/audio_waveforms/flutter_local_notifications/local_auth/share_plus/path_provider/sqlite3_flutter_libs），无 Podfile 时 CI 的 pod install 无从执行、插件不链接；旧工程缺失此文件（其插件仅 http/shared_preferences）。按 flutter create 模板落位（platform 13.0 与 pbxproj 一致，含 RunnerTests target）。
+4. **git 初始化**：`git init -b main` + 初始提交 `5719d35`（107 文件；build/.dart_tool/.idea/sqlite3.dll 均按 .gitignore 排除——tool/bin/sqlite3.dll 已入库供 Windows 测试用）。push 需用户在 GitHub 建仓库并登录授权（本机 8 月曾 push 过旧工程，凭据管理器大概率已存）。
 
 ## 测试清单（`flutter test` 73 项全绿；后端未启动时 live 14 项自动 SKIP）
 
