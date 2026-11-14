@@ -1,9 +1,10 @@
-# Flutter iOS CocoaPods 集成（flutter create 模板标准 Podfile）。
-# 本工程含原生插件（image_picker/audio_waveforms/flutter_local_notifications/
-# local_auth/share_plus/path_provider/sqlite3_flutter_libs），CI 上
-# `flutter build ios` 依赖此文件执行 pod install 链接插件。
-platform :ios, '13.0'
+# CocoaPods 集成（Flutter 3.44.8 templates/cocoapods/Podfile-ios 原版模板逐字拷贝）。
+# 工程为 Swift Package Manager 优先：多数插件走 SPM，audio_waveforms 不支持 SPM
+# 需回退 CocoaPods → CI 的 pod install 依赖此文件（工具不会自动生成，Windows 无法本地构建故须手动落位）。
+# Uncomment this line to define a global platform for your project
+# platform :ios, '13.0'
 
+# CocoaPods analytics sends network stats synchronously affecting flutter build latency.
 ENV['COCOAPODS_DISABLE_STATS'] = 'true'
 
 project 'Runner', {
@@ -15,26 +16,24 @@ project 'Runner', {
 def flutter_root
   generated_xcode_build_settings_path = File.expand_path(File.join('..', 'Flutter', 'Generated.xcconfig'), __FILE__)
   unless File.exist?(generated_xcode_build_settings_path)
-    raise "#{generated_xcode_build_settings_path} must exist. If you're running pod install manually, make sure flutter pub get is executed first in a Flutter directory."
+    raise "#{generated_xcode_build_settings_path} must exist. If you're running pod install manually, make sure flutter pub get is executed first"
   end
 
-  parsed_lines = File.read(generated_xcode_build_settings_path).split("\n")
-  parsed_lines.each do |line|
-    m = line.match(/\s*FLUTTER_ROOT\=(.*)/)
-    return m[1].strip if m
+  File.foreach(generated_xcode_build_settings_path) do |line|
+    matches = line.match(/FLUTTER_ROOT\=(.*)/)
+    return matches[1].strip if matches
   end
   raise "FLUTTER_ROOT not found in #{generated_xcode_build_settings_path}. Try deleting Generated.xcconfig, then run flutter pub get"
 end
 
 require File.expand_path(File.join('packages', 'flutter_tools', 'bin', 'podhelper'), flutter_root)
 
-flutter_ios_podspec_setup
+flutter_ios_podfile_setup
 
 target 'Runner' do
   use_frameworks!
 
   flutter_install_all_ios_pods File.dirname(File.realpath(__FILE__))
-
   target 'RunnerTests' do
     inherit! :search_paths
   end
