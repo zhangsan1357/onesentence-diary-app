@@ -216,7 +216,17 @@
 4. 踩坑三连：①djb2 乘数 33≡0 (mod 3) → 其值恒为 3 的倍数，对 12 生肖取模时「前缀加盐」系统性失效（实测 18/20 撞同动物）→ 换乘数 31（Java hashCode 同款，与 12 互素）；②`dart run` import 整包撞 drift FFI 编译器 crash（绕开：独立脚本验证哈希）；③Riverpod 3 的 StateProvider 在 `flutter_riverpod/legacy.dart`。
 5. 测试 **94 项全绿**（新增 6：SWRR 等权不饿死/全覆盖/加权平滑性、stableHash 确定性/生肖表 12 互异/渲染冒烟+盐变随机性）。analyze 零告警。
 
-## 测试清单（`flutter test` 94 项全绿；后端未启动时 live 14 项自动 SKIP）
+## 2026-11-16（晨 14）评论头像退回原版动物脸（去底色）+ 离线队列（云端不可达本地暂存）
+
+1. **评论头像再改回原版**（用户拍板：12 生肖带底色圆「比不上原版」，评论场景不要底色）：[animal_avatar.dart](lib/widgets/animal_avatar.dart) 恢复 d776648 原版 20 动物脸表（`animalFaces` ★配置点），渲染改**裸 emoji**（无 ClipOval/底色，fontSize=size），salt 随机机制与 stableHash(31) 不变。
+2. **离线队列**（用户需求：云端暂时无法访问 → 增删改先本地保存，云端恢复后一次性同步；**用户拍板：不加定时自动重试，手动刷新才触发冲正**）：
+   - **库 v2**：Entries 加 `syncState`（0 已同步/1 待新建/2 待替换/3 待删除）+ 新表 `PendingMedia`（已加密媒体字节暂存，落盘零明文 P1-3 同款约束）；migration addColumn/createTable。踩坑：**列名不能用 `blob`（与 drift Table.blob 构建器同名冲突）**→ 改 `bytes`。
+   - **发布/编辑/评论/删除**：网络层失败（DioException，与业务错误 ApiException 区分）→ 本地落盘 + 标记 syncState + toast「云端不可达 · 已本地保存」；媒体端上加密后暂存（`_encryptMediaLocal`），引用等冲正时注入。未上云条目（serverId=null）直接本地硬删不入队。
+   - **冲正 `_flushDirty`**（syncNow 前置，手动下拉刷新/解锁/横幅重试触发）：按 updatedAtMs 从旧到新重放——上传暂存媒体 → 解密载荷注入引用 → 重加密 → create/replace/delete；删除 404 视为已删成功；网络仍不通则中断保留队列（下次刷新续传）。拉取同步跳过未同步行（防云端旧密文覆盖本地新密文）。
+   - **UI**：时光页头部「N 条待同步」橙色徽标（pendingCount>0 时显示）。
+3. 测试 **102 项全绿**（新增 8：头像表改版 1 + 离线队列 7——发布入队/冲正新建+幂等/评论待替换/删除待删除/离线新建再删直除/中途断网续传/媒体暂存注入）。analyze 零告警。
+
+## 测试清单（`flutter test` 102 项全绿；后端未启动时 live 14 项自动 SKIP）
 
 - **golden 向量 9 项**（`test/core/e2ee/golden_test.dart`，02 §7 固化向量）：Argon2id masterKey、X25519 公钥推导（clamp）、sharedSecret、HKDF encKey、92B EncryptedCEK 字节布局、AES-GCM cipher+tag 布局、完整 JSON fixture 解密、确定性加密复现完整 JSON、随机往返。**一次实现全绿**，Dart 端与 Go 参考实现逐字节互通。
 - **恢复词 7 项**（`test/core/session/recovery_words_test.dart`）：BIP39 黄金向量（熵全 0 短语+seed，Node 互证）、生成多轮校验、抄写错误四类拒绝（换词/缺词/词表外/错序）、空白归一化、hex 判定、**diaryPass 动态口令向量（活后端实测）+窗口边界**。
@@ -226,7 +236,8 @@
 - **core 单测 8 项**：tagColor 哈希与 JS 参考实现一致、payload 序列化往返、容错解码、天分组、调休合并/说明行/命中。
 - **UI 冒烟 21 项**（390×844 手机视口）：feed 渲染（**头像头部/年月一行/若隐若现分割线**）/折叠/**下拉刷新头拖拽箭头**/**关键词搜索（正文/标签/无结果/还原）**/**评论展开（第三方随机头像 + 存量 HH:mm 补日期标准格式）**/日历/**跨月双休红显（outside weekend）**/回忆/我的页全行/发布流（标签 chips 点选）/TagChip/标签管理回归/**标签调色板改色（粉→0xFFFF2D55 断言）+ 心情管理列表**/**长按编辑**/**长按删除（二次确认）**/主题三档/**onboarding（12 宫格优先+随机生成+黄金向量提交）/401 横幅**/**ToastHost 3 项**。
 - **App 图标 3 项**（`test/features/app_icon_test.dart`，2026-11-16）：弹窗默认+三样例+当前勾选、点击样例通道 set、默认=空串映射（原生 setAlternateIconName(nil)）。MethodChannel mock。
-- **SWRR 算法 3 项 + 动物头像 3 项**（`test/features/swrr_test.dart`、`animal_avatar_test.dart`，2026-11-16）：等权平滑轮询不饿死/全覆盖/加权平滑性（[1,1,2] 四轮 c×2 不相邻）；stableHash 确定性/12 生肖表互异/渲染冒烟+盐变随机性。
+- **SWRR 算法 3 项 + 动物头像 4 项**（`test/features/swrr_test.dart`、`animal_avatar_test.dart`，2026-11-16）：等权平滑轮询不饿死/全覆盖/加权平滑性（[1,1,2] 四轮 c×2 不相邻）；stableHash 确定性/原版 20 动物脸表互异/裸 emoji 渲染无底色/盐变随机性。
+- **离线队列 7 项**（`test/features/offline_sync_test.dart`，2026-11-16 晨 14）：发布断网本地入队（syncState=1+计数+提示）、手动刷新冲正新建+幂等不重放、评论断网待替换（syncState=2 → 冲正推替换且评论在密文内）、删除已同步条目断网待删除（syncState=3 → 冲正推删除）、离线新建再删本地直除、冲正中途断网已推清队未推保留（下次刷新续传）、带图发布断网媒体加密暂存 → 冲正上传注入引用。FakeApi 注入（debugUseApi，online 开关模拟断网/恢复，DioException=断网信号）。
 - **显示配置 4 项**（`test/core/session/display_cfg_test.dart`）：标签库增删（初始含默认三项）+ KV 重载（'[]' 空库语义）、调色板覆盖/恢复自动/非法色名忽略、心情增删改（默认仅改显示）+ KV 重载、cfgVersion 自增。MemoryLocalStore 注入 + debugLoadCfg 钩子；静态表 setUp/tearDown 复位防污染。
 - **光晕像素采样 2 项**（`test/features/glow_pixel_test.dart`；深色期望改为可见 Δ≥4 ≤48——用户覆盖原版 0.15）。
 - **live 集成 14 项**（`test/live/integration_live_test.dart`）：原 11 项回归（全程隐式验证 X-Diary-Pass）+ M3-12 动态口令 401 + M3-13 多设备共享 + M3-14 冒名拒绝。**2026-11-14 后端 v4 实测 14/14 全绿**（未启动自动 SKIP）。

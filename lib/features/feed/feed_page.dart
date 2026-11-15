@@ -154,6 +154,23 @@ class _FeedPageState extends ConsumerState<FeedPage> {
                         letterSpacing: -.4,
                         color: Tokens.label(b))),
                 Row(children: [
+                  // 离线队列徽标：云端不可达时本地暂存的条数（手动刷新冲正）
+                  if (state.pendingCount > 0) ...[
+                    Container(
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 9, vertical: 4),
+                      decoration: BoxDecoration(
+                        color: Tokens.orange(b).withValues(alpha: .14),
+                        borderRadius: BorderRadius.circular(999),
+                      ),
+                      child: Text('${state.pendingCount} 条待同步',
+                          style: TextStyle(
+                              fontSize: 11,
+                              fontWeight: FontWeight.w600,
+                              color: Tokens.orange(b))),
+                    ),
+                    const SizedBox(width: 10),
+                  ],
                   _iconBtn(b, Icons.search_outlined, _toggleSearch),
                   if (state.lockEnabled) ...[
                     const SizedBox(width: 10),

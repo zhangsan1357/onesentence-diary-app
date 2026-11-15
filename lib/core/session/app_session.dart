@@ -7,6 +7,7 @@ import 'dart:async';
 import 'dart:convert';
 
 
+import 'package:dio/dio.dart' show DioException;
 import 'package:drift/drift.dart' show Value;
 import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -69,6 +70,7 @@ class AppState {
   final String? syncError; // 最近一次同步失败（401 横幅/重试入口；null=正常）
   final bool bioUnlock; // 面容 ID 解锁（私钥存生物识别保护的钥匙串）
   final int cfgVersion; // 标签/心情显示配置版本（变更自增，驱动 UI 重建）
+  final int pendingCount; // 离线队列长度（云端不可达时本地暂存的增删改条数）
 
   const AppState({
     this.ready = false,
@@ -92,6 +94,7 @@ class AppState {
     this.syncError,
     this.bioUnlock = false,
     this.cfgVersion = 0,
+    this.pendingCount = 0,
   });
 
   bool get unlocked => ready && !locked;
@@ -121,6 +124,7 @@ class AppState {
     bool clearSyncError = false,
     bool? bioUnlock,
     int? cfgVersion,
+    int? pendingCount,
   }) =>
       AppState(
         ready: ready ?? this.ready,
@@ -145,13 +149,14 @@ class AppState {
         syncError: clearSyncError ? null : (syncError ?? this.syncError),
         bioUnlock: bioUnlock ?? this.bioUnlock,
         cfgVersion: cfgVersion ?? this.cfgVersion,
+        pendingCount: pendingCount ?? this.pendingCount,
       );
 }
 
 class AppSession extends Notifier<AppState> {
   db.LocalStore? _db;
   UnlockedSession? _session;
-  final _api = ApiClient();
+  ApiClient _api = ApiClient();
   bool _demo = false;
   // 后端头像链接（EntryVO.avatar）按 localId 挂内存——客户端只消费不拼装。
   // 每次同步覆盖更新（后端现生成、每次不同）：用户拍板「刷新后新头像，有新鲜感」
@@ -174,6 +179,10 @@ class AppSession extends Notifier<AppState> {
     _db = store;
     _demo = false;
   }
+
+  /// 测试注入 API 客户端（离线队列单测用：假实现模拟云端不可达/恢复）。
+  @visibleForTesting
+  void debugUseApi(ApiClient api) => _api = api;
 
   /// 测试钩子：按 init 明文分支从 KV 重建会话（存量身份流程单测用）。
   @visibleForTesting
@@ -473,6 +482,7 @@ class AppSession extends Notifier<AppState> {
     _api.otpKey = ks.publicKeyHex;
     await _persistKeystore(ks);
     await _db!.clearEntries(); // 旧身份的本地索引作废
+    await _db!.clearPendingMedia(); // 旧身份的离线队列一并作废
     await _db!.kvRemove('sync.cursor');
     await _db!.kvRemove('api.token');
     state = state.copyWith(
@@ -556,6 +566,7 @@ class AppSession extends Notifier<AppState> {
       await db.kvRemove('sync.cursor');
       _avatars.clear();
       await db.clearEntries();
+      await db.clearPendingMedia(); // 离线队列（暂存媒体）随注销一并清除
     }
     if (!ref.mounted) return;
     state = state.copyWith(
@@ -731,12 +742,16 @@ class AppSession extends Notifier<AppState> {
     final s = _session;
     if (s == null || _db == null) return;
     try {
+      // 先冲正离线队列（云端不可达时本地暂存的增删改），再全量拉取——
+      // 手动刷新（下拉/解锁/横幅重试）是唯一的冲正时机（2026-11-16 用户拍板：不加定时自动重试）。
+      await _flushDirty();
       await _syncOnce();
       _set((s) => s.copyWith(clearSyncError: true));
     } on ApiException catch (e) {
       if (e.code == 401 && !e.message.contains('动态口令')) {
         // token 失效（换发 token 动态口令仍无法通过时不会走到这）→ 重注册再试
         await _register();
+        await _flushDirty();
         await _syncOnce();
         _set((s) => s.copyWith(clearSyncError: true));
       } else {
@@ -747,6 +762,99 @@ class AppSession extends Notifier<AppState> {
             ));
         rethrow;
       }
+    }
+  }
+
+  /// 离线队列冲正：按最后修改时间从旧到新重放本地暂存的增删改。
+  /// 网络仍不可达（DioException）→ 中断保留队列（下次手动刷新再试）；
+  /// 业务错误（ApiException）→ 上抛给 syncNow 的横幅；删除 404 视为已删成功。
+  Future<void> _flushDirty() async {
+    final s = _session;
+    if (s == null || _db == null) return;
+    final rows = (await _db!.allEntries())
+        .where((r) => r.syncState != 0)
+        .toList()
+      ..sort((a, b) => a.updatedAtMs.compareTo(b.updatedAtMs));
+    for (final r in rows) {
+      // 暂存媒体先上传 → 引用注入载荷 → 整条重加密（明文只在内存，P1-3 同款约束）
+      var cipherJson = r.cipherJson ?? '';
+      final pending = await _db!.pendingMediaFor(r.localId);
+      if (pending.isNotEmpty && r.syncState != 3) {
+        final refs = <MediaRef>[];
+        for (final m in pending) {
+          final up = await _api.uploadMedia(m.blob);
+          refs.add(MediaRef(
+              id: up.id, kind: m.kind, cekB64: m.cekWrappedB64, sec: m.sec));
+        }
+        final bytes = await Envelope.decrypt(cipherJson, s.privateKey);
+        final old = EntryPayload.decode(utf8.decode(bytes));
+        final payload = EntryPayload(
+          text: old.text,
+          time: old.time,
+          mood: old.mood,
+          tags: old.tags,
+          media: [...old.media, ...refs],
+          comments: old.comments,
+        );
+        cipherJson = await Envelope.encryptJson(
+          utf8.encode(payload.encode()),
+          s.publicKey,
+        );
+      }
+      final parts = jsonDecode(cipherJson) as Map<String, dynamic>;
+      switch (r.syncState) {
+        case 1: // 待新建
+          final serverId = await _api.createEntry(
+            entryDate: r.entryDate,
+            ciphertext: parts['ciphertext'] as String,
+            nonceContent: parts['nonce_content'] as String,
+            encryptedCek: parts['encrypted_cek'] as String,
+          );
+          await _upsertLocal(
+            localId: r.localId,
+            serverId: serverId,
+            date: r.entryDate,
+            cipherJson: cipherJson,
+            updatedAtMs: r.updatedAtMs,
+            syncState: 0,
+          );
+          break;
+        case 2: // 待替换（编辑/评论）
+          await _api.replaceEntry(
+            id: r.serverId!,
+            entryDate: r.entryDate,
+            ciphertext: parts['ciphertext'] as String,
+            nonceContent: parts['nonce_content'] as String,
+            encryptedCek: parts['encrypted_cek'] as String,
+          );
+          await _upsertLocal(
+            localId: r.localId,
+            serverId: r.serverId,
+            date: r.entryDate,
+            cipherJson: cipherJson,
+            updatedAtMs: r.updatedAtMs,
+            syncState: 0,
+          );
+          break;
+        case 3: // 待删除
+          try {
+            await _api.deleteEntry(r.serverId!);
+          } on ApiException catch (e) {
+            if (e.code != 404) rethrow; // 404=服务端本就没有，视为已删
+          }
+          await _upsertLocal(
+            localId: r.localId,
+            serverId: r.serverId,
+            date: r.entryDate,
+            cipherJson: r.cipherJson,
+            updatedAtMs: r.updatedAtMs,
+            deleted: true,
+            syncState: 0,
+          );
+          break;
+      }
+      await _db!.deletePendingMediaFor(r.localId);
+      _set((s) => s.copyWith(pendingCount: s.pendingCount - 1));
     }
   }
 
@@ -762,6 +870,8 @@ class AppSession extends Notifier<AppState> {
     };
     for (final se in result.list) {
       final local = byServerId[se.id];
+      // 本地未同步的改动（离线队列）是最终态：跳过，防云端旧密文覆盖本地新密文
+      if (local != null && local.syncState != 0) continue;
       final localId = local?.localId ?? _newLocalId();
       // 后端头像链接：每次同步覆盖（后端现生成、每次不同 → 刷新后有新鲜感）
       final av = se.avatar;
@@ -853,7 +963,8 @@ class AppSession extends Notifier<AppState> {
         avatarUrl: _avatars[r.localId],
       ));
     }
-    _set((s) => s.copyWith(entries: entries));
+    final pending = rows.where((r) => r.syncState != 0).length;
+    _set((s) => s.copyWith(entries: entries, pendingCount: pending));
   }
 
   Future<void> _upsertLocal({
@@ -863,6 +974,7 @@ class AppSession extends Notifier<AppState> {
     String? cipherJson,
     required int updatedAtMs,
     bool deleted = false,
+    int? syncState, // null = 不改动（保留现有状态）
   }) async {
     // 落盘零明文（P1-3）：payloadJson 列复用存密文 JSON（免 schema 迁移），
     // 解密只在读取（_loadLocalEntries）时发生。
@@ -874,6 +986,8 @@ class AppSession extends Notifier<AppState> {
       cipherJson: driftStr(cipherJson),
       updatedAtMs: updatedAtMs,
       deleted: driftBool(deleted),
+      syncState:
+          syncState == null ? const Value.absent() : Value(syncState),
     ));
   }
 
@@ -917,14 +1031,21 @@ class AppSession extends Notifier<AppState> {
 
     final s = _session;
     if (s == null) throw StateError('locked');
+    final localId = _newLocalId(); // 在媒体加密前生成：离线暂存媒体要与条目关联
 
-    // 1) 媒体端上加密后上传（blob = nonce12 ‖ AES-GCM(cipher+tag)）
+    // 1) 媒体端上加密后上传（blob = nonce12 ‖ AES-GCM(cipher+tag)）；
+    //    云端不可达 → 媒体本地加密暂存，引用等冲正时注入（离线队列 2026-11-16）
     final mediaRefs = <MediaRef>[];
+    final pendingMedia = <db.PendingMediaItem>[];
     for (final m in media) {
-      mediaRefs.add(await _encryptUploadMedia(m, s));
+      try {
+        mediaRefs.add(await _encryptUploadMedia(m, s, localId));
+      } on DioException {
+        pendingMedia.add(await _encryptMediaLocal(m, s, localId));
+      }
     }
 
-    // 2) 载荷加密（每条独立 CEK）
+    // 2) 载荷加密（每条独立 CEK；未上传的媒体不入引用）
     final payload = EntryPayload(
       text: text.isEmpty ? '（一句没打完的话）' : text,
       time: time,
@@ -940,8 +1061,8 @@ class AppSession extends Notifier<AppState> {
     );
     final parts = jsonDecode(cipherJson) as Map<String, dynamic>;
 
-    // 3) 上传密文（失败重注册一次）
-    int serverId;
+    // 3) 上传密文（失败重注册一次；网络不可达 → 本地入队，联网后随手动刷新冲正）
+    int? serverId;
     try {
       serverId = await _api.createEntry(
         entryDate: date,
@@ -961,11 +1082,37 @@ class AppSession extends Notifier<AppState> {
       } else {
         rethrow;
       }
+    } on DioException {
+      final entry = DiaryEntry(
+        localId: localId,
+        serverId: null,
+        date: date,
+        payload: payload,
+        cipherJson: cipherJson,
+        updatedAt: now,
+      );
+      await _upsertLocal(
+        localId: localId,
+        date: date,
+        cipherJson: cipherJson,
+        updatedAtMs: now.millisecondsSinceEpoch,
+        syncState: 1,
+      );
+      for (final m in pendingMedia) {
+        await _db!.insertPendingMedia(m);
+      }
+      state = state.copyWith(
+        entries: [entry, ...state.entries],
+        highlightDate: now,
+        pendingCount: state.pendingCount + 1,
+        toast: '云端不可达 · 已本地保存，联网后手动刷新同步',
+      );
+      return;
     }
 
     // 4) 本地索引
     final entry = DiaryEntry(
-      localId: _newLocalId(),
+      localId: localId,
       serverId: serverId,
       date: date,
       payload: payload,
@@ -1014,6 +1161,17 @@ class AppSession extends Notifier<AppState> {
   Future<void> deleteEntry(DiaryEntry entry) async {
     final now = DateTime.now();
     final deleted = entry.copyWith(deleted: true, updatedAt: now);
+    if (!_demo && entry.serverId == null) {
+      // 未上云的离线新建条目：无服务端可删 → 本地直接清除，队列计数一并回落
+      await _db!.deleteEntryHard(entry.localId);
+      await _db!.deletePendingMediaFor(entry.localId);
+      state = state.copyWith(
+        entries:
+            state.entries.where((e) => e.localId != entry.localId).toList(),
+        pendingCount: state.pendingCount - 1,
+      );
+      return;
+    }
     if (!_demo && entry.serverId != null) {
       try {
         await _api.deleteEntry(entry.serverId!);
@@ -1024,6 +1182,27 @@ class AppSession extends Notifier<AppState> {
         } else {
           rethrow;
         }
+      } on DioException {
+        // 云端不可达：本地标记删除 + 入队，联网后随手动刷新冲正（离线队列）
+        final wasDirty = (await _db!.allEntries())
+            .any((r) => r.localId == entry.localId && r.syncState != 0);
+        await _upsertLocal(
+          localId: entry.localId,
+          serverId: entry.serverId,
+          date: entry.date,
+          cipherJson: entry.cipherJson,
+          updatedAtMs: now.millisecondsSinceEpoch,
+          deleted: true,
+          syncState: 3,
+        );
+        await _db!.deletePendingMediaFor(entry.localId); // 已删条目的暂存媒体不再上传
+        _set((s) => s.copyWith(
+              pendingCount: s.pendingCount + (wasDirty ? 0 : 1),
+              toast: '云端不可达 · 已本地保存，联网后手动刷新同步',
+            ));
+        _replaceLocal(deleted);
+        state = state.copyWith(entries: [...state.entries]);
+        return;
       }
     }
     if (_db != null) {
@@ -1042,24 +1221,39 @@ class AppSession extends Notifier<AppState> {
   }
 
   /// 单个媒体：随机 CEK 端上加密上传 + CEK ECIES 包裹进载荷引用。
-  Future<MediaRef> _encryptUploadMedia(MediaInput m, UnlockedSession s) async {
+  Future<MediaRef> _encryptUploadMedia(
+      MediaInput m, UnlockedSession s, String localId) async {
+    final em = await _encryptMediaLocal(m, s, localId);
+    final up = await _api.uploadMedia(em.blob);
+    return MediaRef(
+      id: up.id,
+      kind: m.kind,
+      cekB64: em.cekWrappedB64,
+      sec: m.sec,
+    );
+  }
+
+  /// 单个媒体端上加密（不上传）：离线队列暂存用（落盘只有密文，P1-3 同款约束）。
+  Future<db.PendingMediaItem> _encryptMediaLocal(
+      MediaInput m, UnlockedSession s, String localId) async {
     final mCek = randomBytes(32);
     final mNonce = randomBytes(12);
     final blob = concat([
       mNonce,
       await aesGcmEncrypt(mCek, mNonce, m.bytes),
     ]);
-    final up = await _api.uploadMedia(blob);
     final wrapped = await wrapCek(mCek, s.publicKey);
-    return MediaRef(
-      id: up.id,
+    return db.PendingMediaItem(
+      localId: localId, // 与条目关联，冲正上传后按条目清理
       kind: m.kind,
-      cekB64: b64Encode(wrapped),
       sec: m.sec,
+      blob: blob,
+      cekWrappedB64: b64Encode(wrapped),
     );
   }
 
   /// 长按编辑：改文本/心情/标签（可追加新媒体），整条重新加密替换（契约：编辑=整条替换）。
+  /// 云端不可达：新媒体本地加密暂存、载荷不带其引用，冲正时上传并注入（离线队列）。
   Future<void> updateEntry(
     DiaryEntry entry, {
     required String text,
@@ -1069,6 +1263,7 @@ class AppSession extends Notifier<AppState> {
   }) async {
     final now = DateTime.now();
     final mediaRefs = [...entry.payload.media];
+    final pendingMedia = <db.PendingMediaItem>[];
     if (_demo) {
       for (final m in newMedia) {
         mediaRefs.add(MediaRef(
@@ -1082,7 +1277,11 @@ class AppSession extends Notifier<AppState> {
       final s = _session;
       if (s == null) throw StateError('locked');
       for (final m in newMedia) {
-        mediaRefs.add(await _encryptUploadMedia(m, s));
+        try {
+          mediaRefs.add(await _encryptUploadMedia(m, s, entry.localId));
+        } on DioException {
+          pendingMedia.add(await _encryptMediaLocal(m, s, entry.localId));
+        }
       }
     }
     final payload = EntryPayload(
@@ -1094,13 +1293,14 @@ class AppSession extends Notifier<AppState> {
       comments: entry.payload.comments,
     );
     final updated = entry.copyWith(payload: payload, updatedAt: now);
-    await _replacePayload(updated);
+    await _replacePayload(updated, pendingMedia: pendingMedia);
     _replaceLocal(updated);
     state = state.copyWith(toast: '已更新 · 重新加密 ✓');
   }
 
-  Future<void> _replacePayload(DiaryEntry entry) async {
-    if (_demo || entry.serverId == null) return;
+  Future<void> _replacePayload(DiaryEntry entry,
+      {List<db.PendingMediaItem> pendingMedia = const []}) async {
+    if (_demo) return;
     final s = _session!;
     final cek = randomBytes(32);
     final cipherJson = await Envelope.encryptJson(
@@ -1108,6 +1308,22 @@ class AppSession extends Notifier<AppState> {
       s.publicKey,
       cek: cek,
     );
+    if (entry.serverId == null) {
+      // 离线新建、尚未上云的条目（syncState=1）：只更新本地，保持待新建标记。
+      // 暂存媒体按本次编辑重置（冲正时载荷重建引用，避免重复上传）。
+      await _db!.deletePendingMediaFor(entry.localId);
+      for (final m in pendingMedia) {
+        await _db!.insertPendingMedia(m);
+      }
+      await _upsertLocal(
+        localId: entry.localId,
+        date: entry.date,
+        cipherJson: cipherJson,
+        updatedAtMs: entry.updatedAt.millisecondsSinceEpoch,
+        syncState: 1,
+      );
+      return;
+    }
     final parts = jsonDecode(cipherJson) as Map<String, dynamic>;
     Future<int> fn() => _api.replaceEntry(
           id: entry.serverId!,
@@ -1125,6 +1341,28 @@ class AppSession extends Notifier<AppState> {
       } else {
         rethrow;
       }
+    } on DioException {
+      // 云端不可达：本地保存为待替换，联网后随手动刷新冲正（离线队列 2026-11-16）
+      final wasDirty =
+          (await _db!.allEntries()).any((r) => r.localId == entry.localId && r.syncState != 0);
+      await _db!.deletePendingMediaFor(entry.localId);
+      for (final m in pendingMedia) {
+        await _db!.insertPendingMedia(m);
+      }
+      await _upsertLocal(
+        localId: entry.localId,
+        serverId: entry.serverId,
+        date: entry.date,
+        cipherJson: cipherJson,
+        updatedAtMs: entry.updatedAt.millisecondsSinceEpoch,
+        syncState: 2,
+      );
+      // 已在队列的条目（再次离线编辑）不重复计数
+      _set((s) => s.copyWith(
+            pendingCount: s.pendingCount + (wasDirty ? 0 : 1),
+            toast: '云端不可达 · 已本地保存，联网后手动刷新同步',
+          ));
+      return;
     }
     await _upsertLocal(
       localId: entry.localId,
