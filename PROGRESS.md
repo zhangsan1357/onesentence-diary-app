@@ -193,7 +193,16 @@
 3. **自测双路径通过**（合成图：600×400 不透明 → cover 裁方；400×600 透明 → contain 白底居中，bbox 上 255/下 256）：15 张全 color type 2。踩坑记录：①`Interpolation` 只有 nearest/linear/cubic；②`hasPalette` 看 `palette!=null`（RGB 调色板 numChannels 仍报 3，判真彩必须用 hasPalette）；③文件名正则 `\d+` 跨不过 `83.5` 的小数点（放宽 `[\d.]+`）。
 4. 等用户提供图片 → 跑管线出全套图标 → 看图验收 → 提交 → push 出 ipa。
 
-## 测试清单（`flutter test` 85 项全绿；后端未启动时 live 14 项自动 SKIP）
+## 2026-11-16（晨 11）App 内换图标功能（真机生效，三样例定稿）
+
+1. **三张样图预处理定稿**（用户拍板「①裁剪 ②③放大」；临时脚本出图后逐张看图验收）：night=暗夜少女居中裁方（750²）、patrick=派大星含完整「胖？」+脚（926²取616²）、sponge=海绵宝宝地面线压底边（1920²取1300²）。二轮返工：patrick「胖？」右上残半截→改完整收进（梗图灵魂）；sponge 底部地面线裁切位置三调。
+2. **iOS 备用图标机制**（`setAlternateIconName`，iOS 10.3+ 公开 API）：Assets.xcassets 新增 AppIconNight/Patrick/Sponge 三个单尺寸 appiconset（1024×1024 RGB 无透明，Xcode 14 单尺寸格式）；[project.pbxproj](ios/Runner.xcodeproj/project.pbxproj) 三处 Runner 配置（Debug/Profile/Release）加 `ASSETCATALOG_COMPILER_ALTERNATE_APP_ICON_NAMES`，不动 Info.plist。
+3. **原生通道**（[AppDelegate.swift](ios/Runner/AppDelegate.swift)）：AppIconPlugin（FlutterPlugin，在模板 `didInitializeImplicitFlutterEngine` 扩展点注册，scene 生命周期安全）——`get` 当前名 / `set(name)`（空串=恢复默认 `setAlternateIconName(nil)`）；成功后 iOS 自动弹系统确认框。
+4. **Flutter 侧**：[lib/core/app_icon.dart](lib/core/app_icon.dart)（choices 三元组 + supported 门控 `!kIsWeb && defaultTargetPlatform==iOS`）+「我的」页配置组新增「App 图标」行（仅 iOS 显示）+ [dialogs.dart](lib/features/me/dialogs.dart) `showAppIconDialog`（默认+3 格缩略图、当前勾选、失败红字降级；缩略图走 `assets/appicon/` 240px 预览）。web 预览自动隐藏该行。
+5. 测试：**88 项全绿**（新增 3 条：弹窗选项+当前勾选、点击样例通道收到 set、默认=空串映射）。analyze 零告警。
+6. **名字答疑**：桌面显示名= Info.plist `CFBundleDisplayName`（已是「一句话日记」）；`CFBundleName=diary_app` 内部标识不可见。
+
+## 测试清单（`flutter test` 88 项全绿；后端未启动时 live 14 项自动 SKIP）
 
 - **golden 向量 9 项**（`test/core/e2ee/golden_test.dart`，02 §7 固化向量）：Argon2id masterKey、X25519 公钥推导（clamp）、sharedSecret、HKDF encKey、92B EncryptedCEK 字节布局、AES-GCM cipher+tag 布局、完整 JSON fixture 解密、确定性加密复现完整 JSON、随机往返。**一次实现全绿**，Dart 端与 Go 参考实现逐字节互通。
 - **恢复词 7 项**（`test/core/session/recovery_words_test.dart`）：BIP39 黄金向量（熵全 0 短语+seed，Node 互证）、生成多轮校验、抄写错误四类拒绝（换词/缺词/词表外/错序）、空白归一化、hex 判定、**diaryPass 动态口令向量（活后端实测）+窗口边界**。
@@ -202,6 +211,7 @@
 - **面容解锁 4 项**（`test/core/session/bio_unlock_test.dart`）：启用（生物识别确认 → 私钥入库 + ui.bio）、锁定后面容免口令解锁（bio-missing 回退信号 + 口令回退仍可用）、拒绝启用（识别未过/设备不可用）+ 关闭清除、注销清除钥匙串存档。FakeBioVault 注入。
 - **core 单测 8 项**：tagColor 哈希与 JS 参考实现一致、payload 序列化往返、容错解码、天分组、调休合并/说明行/命中。
 - **UI 冒烟 21 项**（390×844 手机视口）：feed 渲染（**头像头部/年月一行/若隐若现分割线**）/折叠/**下拉刷新头拖拽箭头**/**关键词搜索（正文/标签/无结果/还原）**/**评论展开（第三方随机头像 + 存量 HH:mm 补日期标准格式）**/日历/**跨月双休红显（outside weekend）**/回忆/我的页全行/发布流（标签 chips 点选）/TagChip/标签管理回归/**标签调色板改色（粉→0xFFFF2D55 断言）+ 心情管理列表**/**长按编辑**/**长按删除（二次确认）**/主题三档/**onboarding（12 宫格优先+随机生成+黄金向量提交）/401 横幅**/**ToastHost 3 项**。
+- **App 图标 3 项**（`test/features/app_icon_test.dart`，2026-11-16）：弹窗默认+三样例+当前勾选、点击样例通道 set、默认=空串映射（原生 setAlternateIconName(nil)）。MethodChannel mock。
 - **显示配置 4 项**（`test/core/session/display_cfg_test.dart`）：标签库增删（初始含默认三项）+ KV 重载（'[]' 空库语义）、调色板覆盖/恢复自动/非法色名忽略、心情增删改（默认仅改显示）+ KV 重载、cfgVersion 自增。MemoryLocalStore 注入 + debugLoadCfg 钩子；静态表 setUp/tearDown 复位防污染。
 - **光晕像素采样 2 项**（`test/features/glow_pixel_test.dart`；深色期望改为可见 Δ≥4 ≤48——用户覆盖原版 0.15）。
 - **live 集成 14 项**（`test/live/integration_live_test.dart`）：原 11 项回归（全程隐式验证 X-Diary-Pass）+ M3-12 动态口令 401 + M3-13 多设备共享 + M3-14 冒名拒绝。**2026-11-14 后端 v4 实测 14/14 全绿**（未启动自动 SKIP）。

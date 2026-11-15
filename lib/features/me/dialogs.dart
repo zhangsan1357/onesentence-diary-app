@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:share_plus/share_plus.dart';
 
+import '../../core/app_icon.dart';
 import '../../core/config/app_defaults.dart';
 import '../../core/model/diary_entry.dart';
 import '../../core/session/app_session.dart';
@@ -24,6 +25,127 @@ Future<void> showInfoDialog(BuildContext context, String title, String body) {
       ],
     ),
   );
+}
+
+/// App 图标切换（2026-11-16，iOS 备用图标机制）：点击即换，iOS 系统会弹确认框。
+/// 「默认」= 恢复 Flutter 图标；成功后关弹窗（系统确认框随后自行弹出）。
+Future<void> showAppIconDialog(BuildContext context) async {
+  final current = await AppIcon.current();
+  if (!context.mounted) return;
+  await showDialog(
+    context: context,
+    builder: (ctx) => _AppIconDialog(current: current),
+  );
+}
+
+class _AppIconDialog extends StatefulWidget {
+  final String? current;
+  const _AppIconDialog({required this.current});
+
+  @override
+  State<_AppIconDialog> createState() => _AppIconDialogState();
+}
+
+class _AppIconDialogState extends State<_AppIconDialog> {
+  // 打开时定格：成功即弹窗关闭，失败保持旧值
+  late final String? _current = widget.current;
+  String? _busy; // 正在设置的那格（null 格子用哨兵值，避免与「当前=null」混淆）
+  String? _error;
+
+  static const _defaultTile = '__default__';
+
+  Future<void> _pick(String? name) async {
+    setState(() => _busy = name ?? _defaultTile);
+    try {
+      await AppIcon.set(name);
+      if (mounted) Navigator.pop(context);
+    } catch (e) {
+      if (mounted) {
+        setState(() {
+          _busy = null;
+          _error = '设置失败：$e';
+        });
+      }
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final b = Theme.of(context).brightness;
+    Widget tile(String? name, String label, String? asset) {
+      final selected = name == _current || (name == null && _current == null);
+      final busy = _busy == (name ?? _defaultTile);
+      return Expanded(
+        child: InkWell(
+          onTap: busy ? null : () => _pick(name),
+          borderRadius: BorderRadius.circular(12),
+          child: Column(children: [
+            Stack(children: [
+              Container(
+                width: 56,
+                height: 56,
+                decoration: BoxDecoration(
+                  borderRadius: BorderRadius.circular(13),
+                  border: Border.all(
+                    color: selected ? Tokens.blue(b) : Tokens.sep(b),
+                    width: selected ? 2 : 1,
+                  ),
+                ),
+                child: ClipRRect(
+                  borderRadius: BorderRadius.circular(11),
+                  child: asset != null
+                      ? Image.asset(asset, width: 56, height: 56,
+                          fit: BoxFit.cover)
+                      : Icon(Icons.flutter_dash,
+                          size: 30, color: Tokens.label2(b)),
+                ),
+              ),
+              if (selected)
+                Positioned(
+                  right: 0,
+                  top: 0,
+                  child: Icon(Icons.check_circle,
+                      size: 18, color: Tokens.blue(b)),
+                ),
+            ]),
+            const SizedBox(height: 4),
+            Text(label,
+                style: TextStyle(
+                    fontSize: 11,
+                    color: selected ? Tokens.label(b) : Tokens.label2(b))),
+            if (busy)
+              const SizedBox(
+                height: 2,
+                child: LinearProgressIndicator(minHeight: 2),
+              ),
+          ]),
+        ),
+      );
+    }
+
+    return AlertDialog(
+      title: const Text('App 图标'),
+      content: Column(mainAxisSize: MainAxisSize.min, children: [
+        Text('点击即更换，iOS 会弹确认框。',
+            style: TextStyle(fontSize: 12, color: Tokens.label2(b))),
+        const SizedBox(height: 14),
+        Row(children: [
+          tile(null, '默认', null),
+          for (final (name, label, asset) in AppIcon.choices)
+            tile(name, label, asset),
+        ]),
+        if (_error != null) ...[
+          const SizedBox(height: 10),
+          Text(_error!,
+              style: TextStyle(fontSize: 12, color: Tokens.red(b))),
+        ],
+      ]),
+      actions: [
+        TextButton(
+            onPressed: () => Navigator.pop(context), child: const Text('取消')),
+      ],
+    );
+  }
 }
 
 /// 更换主密钥（仅重包裹私钥封套，数据零重加密）。

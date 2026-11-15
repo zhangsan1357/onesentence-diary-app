@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../core/api/api_client.dart';
+import '../../core/app_icon.dart';
 
 import '../../core/session/app_session.dart';
 import '../../features/theme/tokens.dart';
@@ -215,6 +216,14 @@ class MePage extends ConsumerWidget {
               title: '心情管理',
               onTap: () => showMoodConfigDialog(context, ref),
             ),
+            // App 图标切换（2026-11-16，iOS 备用图标机制；web 预览不显示）
+            if (AppIcon.supported)
+              IosRow(
+                icon: Icons.app_shortcut_outlined,
+                iconBg: const Color(0xFFFF9500),
+                title: 'App 图标',
+                onTap: () => showAppIconDialog(context),
+              ),
           ]),
           // 数据组
           IosGroup(children: [
