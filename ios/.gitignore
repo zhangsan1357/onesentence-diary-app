@@ -10,6 +10,8 @@
 **/.vagrant/
 **/DerivedData/
 Icon?
+# 备用图标松散 PNG（换图标功能）：Icon? 会匹配 Icons/ 目录名，显式放行
+!Icons/
 **/Pods/
 **/.symlinks/
 profile
