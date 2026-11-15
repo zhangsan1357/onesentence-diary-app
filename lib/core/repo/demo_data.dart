@@ -1,8 +1,6 @@
 // 演示数据 = mockup v2 的 ENTRIES 逐条移植（Chrome 视觉迭代用，M2-b 对照）。
 // cek 为空的 MediaRef 表示 demo 占位（UI 渲染渐变色块，不发网络请求）。
-// 头像：demo 走与线上同款 cravatar 渲染路径（种子=localId，确定性）。
 import '../model/diary_entry.dart';
-import '../util/avatar.dart';
 
 DiaryEntry _demo({
   required String date,
@@ -36,7 +34,6 @@ DiaryEntry _demo({
     ),
     cipherJson: null,
     updatedAt: DateTime.parse('$date $time'.replaceFirst(' ', 'T')),
-    avatarUrl: avatarUrl('demo-$date-$seq'),
   );
 }
 

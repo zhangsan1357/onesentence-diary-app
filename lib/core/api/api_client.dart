@@ -38,8 +38,9 @@ class ServerEntry {
   final int payloadSize;
   final String createdAt;
   final String updatedAt;
-  // 契约增量（2026-11-15 用户拍板）：随机头像 URL——响应时现生成、不落库、
-  // 每次请求都不同（树洞匿名风），与条目内容无关联（02 §0 云端只见密文不破坏）。
+  // 契约增量（2026-11-15）：随机头像 URL——响应时现生成、不落库、每次请求都不同。
+  // 客户端不用于展示（web 受 CORS 限制、真机受网络波动，两轮均渲染成灰色占位），
+  // 头像改由本地 SeedAvatar 确定性生成；字段保留仅文档化契约。
   final String? avatar;
   // 契约缺口防御：sync 列表含 deleted 条目（02 §5.3），字段级定义未列出该字段，
   // 按可选字段兼容（bool/int 均可）。

@@ -15,6 +15,7 @@ import '../../features/compose/compose_page.dart';
 import '../../features/shell/home_shell.dart';
 import '../../features/theme/tokens.dart';
 import '../../widgets/common.dart';
+import '../../widgets/seed_avatar.dart';
 import 'comments_view.dart';
 
 class FeedPage extends ConsumerStatefulWidget {
@@ -460,13 +461,13 @@ class DayCardBody extends ConsumerWidget {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        // 头部：头像左上（树洞匿名风，服务端响应随机生成）+ 日右上；
+        // 头部：头像左上（本地确定性生成，种子=日期 → 每天一个）+ 日右上；
         // 年月收在日下（原「月 + 完整日期」两行重复，2026-11-15 用户去掉）
         Padding(
           padding: const EdgeInsets.fromLTRB(14, 13, 14, 4),
           child: Row(
             children: [
-              _Avatar(entries.first.avatarUrl, b),
+              SeedAvatar(seed: entries.first.date, size: 40),
               const Spacer(),
               Column(
                 crossAxisAlignment: CrossAxisAlignment.end,
@@ -521,37 +522,6 @@ class DayCardBody extends ConsumerWidget {
       ],
     );
   }
-}
-
-/// 圆头像：网络加载，加载中/失败回落占位人形；无 URL 时不占位。
-class _Avatar extends StatelessWidget {
-  final String? url;
-  final Brightness b;
-
-  const _Avatar(this.url, this.b);
-
-  @override
-  Widget build(BuildContext context) {
-    if (url == null || url!.isEmpty) return const SizedBox.shrink();
-    return ClipOval(
-      child: SizedBox(
-        width: 40,
-        height: 40,
-        child: Image.network(
-          url!,
-          fit: BoxFit.cover,
-          loadingBuilder: (ctx, child, progress) =>
-              progress == null ? child : _placeholder(),
-          errorBuilder: (_, _, _) => _placeholder(),
-        ),
-      ),
-    );
-  }
-
-  Widget _placeholder() => Container(
-        color: Tokens.fill(b),
-        child: Icon(Icons.person, size: 20, color: Tokens.label3(b)),
-      );
 }
 
 class _Badge extends StatelessWidget {

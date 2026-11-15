@@ -7,6 +7,7 @@ import 'package:diary_app/features/compose/compose_page.dart';
 import 'package:diary_app/features/onboarding/onboarding_page.dart';
 import 'package:diary_app/main.dart';
 import 'package:diary_app/widgets/common.dart';
+import 'package:diary_app/widgets/seed_avatar.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -51,6 +52,21 @@ void main() {
     // 天卡片日期盒（11-12 与 11-11 两张卡）
     expect(find.text('12'), findsWidgets);
     expect(find.textContaining('年11月'), findsNWidgets(2));
+  });
+
+  testWidgets('feed：评论展开——本地头像渲染 + 时间标准格式（存量 HH:mm 补条目日期）',
+      (tester) async {
+    await _pumpHome(tester);
+    // 天卡头像（本地 SeedAvatar，每天一个）：11-12 与 11-11 两张卡
+    expect(find.byType(SeedAvatar), findsNWidgets(2));
+    // 展开首条（11-12，2 条评论）的评论列表
+    await tester.tap(find.byIcon(Icons.mode_comment_outlined).first);
+    await tester.pumpAndSettle();
+    // 每条评论一个头像（2 天卡 + 2 评论）
+    expect(find.byType(SeedAvatar), findsNWidgets(4));
+    // 存量 HH:mm 评论补条目日期 → 标准格式
+    expect(find.text('2026-11-12 21:30'), findsOneWidget);
+    expect(find.text('2026-11-12 22:05'), findsOneWidget);
   });
 
   testWidgets('feed：展开全文切换', (tester) async {

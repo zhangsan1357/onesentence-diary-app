@@ -149,9 +149,6 @@ class AppSession extends Notifier<AppState> {
   UnlockedSession? _session;
   final _api = ApiClient();
   bool _demo = false;
-  // 随机头像（EntryVO.avatar，响应时现生成）按 localId 挂内存条目——不落库，
-  // 重启后由下一次同步重新填充（后端每次请求都会给新头像）。
-  final _avatars = <String, String>{};
 
   /// 面容 ID 解锁桥（测试注入假实现）。
   @visibleForTesting
@@ -743,12 +740,6 @@ class AppSession extends Notifier<AppState> {
     for (final se in result.list) {
       final local = byServerId[se.id];
       final localId = local?.localId ?? _newLocalId();
-      // 头像每次响应都不同：无变化的条目也要更新，否则存量条目永远拿不到头像
-      if (se.avatar != null &&
-          se.avatar!.isNotEmpty &&
-          (local != null || !se.deleted)) {
-        _avatars[localId] = se.avatar!;
-      }
       final cipherJson = jsonEncode({
         'ciphertext': se.ciphertext,
         'nonce_content': se.nonceContent,
@@ -797,7 +788,6 @@ class AppSession extends Notifier<AppState> {
               cipherJson: r.cipherJson,
               updatedAt: DateTime.fromMillisecondsSinceEpoch(r.updatedAtMs),
               deleted: r.deleted,
-              avatarUrl: _avatars[r.localId],
             ))
         .toList();
     _set((s) => s.copyWith(entries: entries));
@@ -939,7 +929,7 @@ class AppSession extends Notifier<AppState> {
     final comment = EntryComment(
       who: '我',
       text: text,
-      time: Dates.hm(now),
+      time: '${Dates.date(now)} ${Dates.hm(now)}', // 标准格式（2026-11-15 用户拍板）
     );
     final payload = EntryPayload(
       text: entry.payload.text,

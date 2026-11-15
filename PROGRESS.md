@@ -142,7 +142,15 @@
 5. **评论每条头像**：评论在密文载荷内（后端无法注入）→ 客户端确定性种子（who|time|text）cravatar——同一条评论稳定、各条互不相同；加载/失败回落原字母圆（离线测试环境走回落路径，原断言不受影响）。
 6. 测试：**81 项全绿**（feed 头部断言改『年11月』×2）+ analyze 零告警 + web 构建通过。浏览器截图本轮 IAB 截图管线超时未取（头像失败回落路径已被离线测试实际覆盖）。
 
-## 测试清单（`flutter test` 81 项全绿；后端未启动时 live 14 项自动 SKIP）
+## 2026-11-15（晨 4）头像改本地确定性生成 + 评论时间标准格式
+
+1. **头像还是灰色的根因与解法**：cravatar 远端图在 web 预览（Flutter 3.44 CanvasKit 渲染器，跨域图需 CORS 头，cravatar 不带）与真机（网络波动）两种环境都加载失败，两轮渲染成灰色占位/字母回落。**用户拍板改本地确定性生成**（[seed_avatar.dart](lib/widgets/seed_avatar.dart)）：颜色（8 色 iOS 色板，与标签色同源 `AppDefaults.stableHash`）+ 表情（20 种动物脸）由种子哈希决定——同种子稳定、跨端一致、**零网络依赖永不灰**。天卡种子=日期（每天一个，用户此前拍板）、评论种子=who|time|text（每条不同）。
+2. **评论「我」字消失**：字母回落圆渲染 who 首字（『我』）即用户看到的「评论我+内容」——SeedAvatar 无文字，彻底解决；评论只显示 头像+内容+时间。
+3. **评论时间标准格式 `2026-11-15 17:08`**：新评论存储改完整 `yyyy-MM-dd HH:mm`（[app_session.dart](lib/core/session/app_session.dart) addComment）；存量 HH:mm 显示时补条目日期（comments_view `_fmtTime`），旧评论也能正确显示。
+4. **网络头像链路整体拆除**（本次改动产物，孤儿清理）：`util/avatar.dart`（cravatar MD5 URL）删除、`DiaryEntry.avatarUrl` 字段删除、session `_avatars` 内存表与同步挂载逻辑删除、feed `_Avatar` 网络组件与评论 `_letterAvatar` 回落删除、demo 数据 avatarUrl 参数删除；`ServerEntry.avatar` 契约字段保留解析（文档化后端增量，客户端不再用于展示）。
+5. 测试：**82 项全绿**（新增「评论展开：本地头像渲染 + 存量 HH:mm 补日期→标准格式」）+ analyze 零告警 + web 构建通过。
+
+## 测试清单（`flutter test` 82 项全绿；后端未启动时 live 14 项自动 SKIP）
 
 - **golden 向量 9 项**（`test/core/e2ee/golden_test.dart`，02 §7 固化向量）：Argon2id masterKey、X25519 公钥推导（clamp）、sharedSecret、HKDF encKey、92B EncryptedCEK 字节布局、AES-GCM cipher+tag 布局、完整 JSON fixture 解密、确定性加密复现完整 JSON、随机往返。**一次实现全绿**，Dart 端与 Go 参考实现逐字节互通。
 - **恢复词 7 项**（`test/core/session/recovery_words_test.dart`）：BIP39 黄金向量（熵全 0 短语+seed，Node 互证）、生成多轮校验、抄写错误四类拒绝（换词/缺词/词表外/错序）、空白归一化、hex 判定、**diaryPass 动态口令向量（活后端实测）+窗口边界**。
@@ -150,7 +158,7 @@
 - **身份流程 7 项**（`test/core/session/identity_flow_test.dart`）：createIdentity 落盘/校验失败不留痕/注册名 gate、loginIdentity 同词同公钥（跨设备等价）/词校验拒绝、存量补设注册名（deviceNo 保留）、**注销账号（KV 全清 + 状态回引导 + 原词可重登）**。MemoryLocalStore 注入（debugUseStore/debugRestorePlainSession 钩子）。
 - **面容解锁 4 项**（`test/core/session/bio_unlock_test.dart`）：启用（生物识别确认 → 私钥入库 + ui.bio）、锁定后面容免口令解锁（bio-missing 回退信号 + 口令回退仍可用）、拒绝启用（识别未过/设备不可用）+ 关闭清除、注销清除钥匙串存档。FakeBioVault 注入。
 - **core 单测 8 项**：tagColor 哈希与 JS 参考实现一致、payload 序列化往返、容错解码、天分组、调休合并/说明行/命中。
-- **UI 冒烟 20 项**（390×844 手机视口）：feed 渲染（**头像头部/年月一行/若隐若现分割线**）/折叠/**下拉刷新头拖拽箭头**/**关键词搜索（正文/标签/无结果/还原）**/日历/**跨月双休红显（outside weekend）**/回忆/我的页全行/发布流（标签 chips 点选）/TagChip/标签管理回归/**标签调色板改色（粉→0xFFFF2D55 断言）+ 心情管理列表**/**长按编辑**/**长按删除（二次确认）**/主题三档/**onboarding（12 宫格优先+随机生成+黄金向量提交）/401 横幅**/**ToastHost 3 项**。
+- **UI 冒烟 21 项**（390×844 手机视口）：feed 渲染（**头像头部/年月一行/若隐若现分割线**）/折叠/**下拉刷新头拖拽箭头**/**关键词搜索（正文/标签/无结果/还原）**/**评论展开（本地 SeedAvatar + 存量 HH:mm 补日期标准格式）**/日历/**跨月双休红显（outside weekend）**/回忆/我的页全行/发布流（标签 chips 点选）/TagChip/标签管理回归/**标签调色板改色（粉→0xFFFF2D55 断言）+ 心情管理列表**/**长按编辑**/**长按删除（二次确认）**/主题三档/**onboarding（12 宫格优先+随机生成+黄金向量提交）/401 横幅**/**ToastHost 3 项**。
 - **显示配置 4 项**（`test/core/session/display_cfg_test.dart`）：标签库增删（初始含默认三项）+ KV 重载（'[]' 空库语义）、调色板覆盖/恢复自动/非法色名忽略、心情增删改（默认仅改显示）+ KV 重载、cfgVersion 自增。MemoryLocalStore 注入 + debugLoadCfg 钩子；静态表 setUp/tearDown 复位防污染。
 - **光晕像素采样 2 项**（`test/features/glow_pixel_test.dart`；深色期望改为可见 Δ≥4 ≤48——用户覆盖原版 0.15）。
 - **live 集成 14 项**（`test/live/integration_live_test.dart`）：原 11 项回归（全程隐式验证 X-Diary-Pass）+ M3-12 动态口令 401 + M3-13 多设备共享 + M3-14 冒名拒绝。**2026-11-14 后端 v4 实测 14/14 全绿**（未启动自动 SKIP）。
@@ -197,7 +205,7 @@
 3. **Face ID 快捷解锁**：local_auth 集成已写，但无 Keychain 存储（flutter_secure_storage 不在手册依赖表），Face ID 通过后仍需口令派生主密钥。真机体验如不满足，提请用户拍板是否增补依赖。
 4. **真机回归 M5**：Face ID/通知/相册/录音/Pushover/新身份全流程（M4-b Sideloadly 装机后）。
 5. **②完整登录 UI 循环（浏览器）**：✅ 已完成（2026-11-14 夜 2）——注册名 123 + 派生密钥 26670b…6720 实测：toast 自动消失、云端两条同步解密、发布页出现云端标签 chips。剩余仅 M5 真机回归。
-6. **建议会话 A**：①02 手册回写 v4 契约（见契约缺口第 1 条）；②注册名唯一性语义确认（后端实测「不同 userId 可绑同一 userKey」——数据空间按 userId 分组，同一人起两个注册名=两个空间，与文案④「数据按注册名共享」一致，无冲突）；③**随机头像（EntryVO.avatar）契约增量回写**（2026-11-15 用户拍板：响应时现生成随机 cravatar URL、不落库、每次请求不同——02 §5 字段表未列，客户端已按可选字段兼容）。
+6. **建议会话 A**：①02 手册回写 v4 契约（见契约缺口第 1 条）；②注册名唯一性语义确认（后端实测「不同 userId 可绑同一 userKey」——数据空间按 userId 分组，同一人起两个注册名=两个空间，与文案④「数据按注册名共享」一致，无冲突）；③**随机头像（EntryVO.avatar）契约增量回写**（2026-11-15 用户拍板：响应时现生成随机 cravatar URL、不落库、每次请求不同——02 §5 字段表未列，客户端已按可选字段兼容；**晨 4 起客户端展示改本地确定性生成，该字段客户端不再消费**）。
 7. **小项**：发布页「发布」禁用态颜色；demo 模式热力图底注 17 天固定文案。
 
 ## 本夜产出小结

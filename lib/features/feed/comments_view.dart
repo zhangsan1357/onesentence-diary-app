@@ -1,14 +1,14 @@
 // 评论视图：懒加载展开后的列表 + 输入行（0 条显示空态文案）。
-// 每条评论配头像（2026-11-15 用户拍板）：cravatar 确定性种子 = 评论身份
-//（who|time|text）——同一条评论稳定、各条互不相同；加载/失败回落原字母圆。
+// 每条评论配本地确定性头像（2026-11-15 用户拍板，替代 cravatar——网络头像在
+// web 预览/真机都渲染成灰色占位）：种子 = 评论身份（who|time|text），同一条
+// 评论稳定、各条互不相同。时间显示标准格式 yyyy-MM-dd HH:mm。
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
-import '../../core/config/app_defaults.dart';
 import '../../core/model/diary_entry.dart';
 import '../../core/session/app_session.dart';
-import '../../core/util/avatar.dart';
 import '../../features/theme/tokens.dart';
+import '../../widgets/seed_avatar.dart';
 
 class CommentsView extends ConsumerStatefulWidget {
   final DiaryEntry entry;
@@ -59,21 +59,7 @@ class _CommentsViewState extends ConsumerState<CommentsView> {
               child: Row(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  ClipOval(
-                    child: SizedBox(
-                      width: 24,
-                      height: 24,
-                      child: Image.network(
-                        avatarUrl('${c.who}|${c.time}|${c.text}'),
-                        fit: BoxFit.cover,
-                        loadingBuilder: (ctx, child, progress) =>
-                            progress == null
-                                ? child
-                                : _letterAvatar(c, b),
-                        errorBuilder: (_, _, _) => _letterAvatar(c, b),
-                      ),
-                    ),
-                  ),
+                  SeedAvatar(seed: '${c.who}|${c.time}|${c.text}', size: 24),
                   const SizedBox(width: 8),
                   Expanded(
                     child: Column(
@@ -85,7 +71,7 @@ class _CommentsViewState extends ConsumerState<CommentsView> {
                                 fontSize: 13,
                                 height: 1.5,
                                 color: Tokens.label(b))),
-                        Text(c.time,
+                        Text(_fmtTime(c),
                             style: TextStyle(
                                 fontSize: 10, color: Tokens.label3(b))),
                       ],
@@ -140,26 +126,10 @@ class _CommentsViewState extends ConsumerState<CommentsView> {
     );
   }
 
-  /// 原字母圆（头像加载中/失败的回落，离线测试环境也走这里）。
-  Widget _letterAvatar(EntryComment c, Brightness b) {
-    return Container(
-      width: 24,
-      height: 24,
-      alignment: Alignment.center,
-      decoration: BoxDecoration(
-        shape: BoxShape.circle,
-        color: AppDefaults.tagColor(c.who).withValues(alpha: .13),
-      ),
-      child: Text(
-        c.who.isEmpty ? '?' : c.who.characters.first,
-        style: TextStyle(
-          fontSize: 12,
-          fontWeight: FontWeight.w700,
-          color: AppDefaults.tagColor(c.who),
-        ),
-      ),
-    );
-  }
+  /// 评论时间标准格式 yyyy-MM-dd HH:mm：新评论已存完整格式；
+  /// 存量只有 HH:mm，用条目日期补全。
+  String _fmtTime(EntryComment c) =>
+      c.time.length > 5 ? c.time : '${widget.entry.date} ${c.time}';
 
   Future<void> _send() async {
     final v = _input.text.trim();
