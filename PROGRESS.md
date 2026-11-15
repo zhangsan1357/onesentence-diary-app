@@ -157,6 +157,12 @@
 3. **浏览器实证**（IAB 390×844）：DiceBear 头像加载成功（橙色机器人，不再灰）；天卡「15」（今日周日）红色 ✓。评论区展开点击在 IAB 不命中（Flutter canvas 命中怪癖），评论头像/时间格式由测试断言覆盖。
 4. 测试：**82 项全绿**（SeedAvatar→NetAvatar 断言更名）+ analyze 零告警 + web 构建通过。
 
+## 2026-11-15（晨 6）头像源定案 cn.cravatar.com + 日数字与卡片同色
+
+1. **CORS 根因最终修正**：cravatar 图源（cn.cravatar.com）本身带 `access-control-allow-origin: *`，缺头的是 **cravatar.cn 入口 301 那一跳**（CORS 要求重定向链每跳过检）。浏览器 fetch 实测（预览页上下文）：cn.cravatar.com 直连 ✓ / cravatar.cn 经 301 ✗ / weavatar.com ✓ / dicebear ✓。用户拍板**直连源站一行解**：[avatar.dart](lib/core/util/avatar.dart) 恢复（MD5→hex），域名 cravatar.cn → **cn.cravatar.com**（省一次跳转，web+真机双通）；NetAvatar 改用 avatarUrl(seed)。iOS 真机本无 CORS，cravatar 一直可用（两轮灰色均为 Chrome 预览）。
+2. **天卡日数字与卡片同色**（用户拍板，覆盖 mockup「常态 label 仅高亮变色」语义）：accent = `glowAnchors[(glowIndex-1) % 8].$3` 常显；DayCardBody.highlighted 参数失去消费者一并删除（GlowDayCard 高亮保留）。上一轮的周末红/班橙日数字方案被本拍板替换。
+3. 浏览器实证：cravatar 头像加载成功 + 日数字「15」与该卡光晕同蓝。测试 **82 项全绿** + analyze 零告警 + web 构建通过。
+
 ## 测试清单（`flutter test` 82 项全绿；后端未启动时 live 14 项自动 SKIP）
 
 - **golden 向量 9 项**（`test/core/e2ee/golden_test.dart`，02 §7 固化向量）：Argon2id masterKey、X25519 公钥推导（clamp）、sharedSecret、HKDF encKey、92B EncryptedCEK 字节布局、AES-GCM cipher+tag 布局、完整 JSON fixture 解密、确定性加密复现完整 JSON、随机往返。**一次实现全绿**，Dart 端与 Go 参考实现逐字节互通。

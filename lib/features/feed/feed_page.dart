@@ -149,7 +149,6 @@ class _FeedPageState extends ConsumerState<FeedPage> {
                   dateKey: g.key,
                   entries: g.value,
                   glowIndex: i + 1,
-                  highlighted: g.key == hlKey,
                 ),
               ),
             );
@@ -431,14 +430,12 @@ class DayCardBody extends ConsumerWidget {
   final String dateKey;
   final List<DiaryEntry> entries;
   final int glowIndex;
-  final bool highlighted;
 
   const DayCardBody({
     super.key,
     required this.dateKey,
     required this.entries,
     required this.glowIndex,
-    this.highlighted = false,
   });
 
   @override
@@ -453,17 +450,9 @@ class DayCardBody extends ConsumerWidget {
             ? _Badge(b, 'off')
             : (hol.type == 'ban' ? _Badge(b, 'ban') : null));
 
-    // 日数字变色：高亮（日历跳转/新发布）按组变色优先；否则与日历页呼应——
-    // 班橙 / 休与双休红 / 工作日 label（2026-11-15 用户反馈「日的变色掉了」）
-    final isWeekend =
-        d.weekday == DateTime.saturday || d.weekday == DateTime.sunday;
-    final accent = highlighted
-        ? Tokens.glowAnchors[(glowIndex - 1) % 8].$3
-        : hol?.type == 'ban'
-            ? Tokens.orange(b)
-            : (hol?.type == 'off' || isWeekend)
-                ? Tokens.red(b)
-                : Tokens.label(b);
+    // 日数字与卡片光晕同色、常显（2026-11-15 用户拍板：日的变色和卡片颜色一致；
+    // 覆盖 mockup「常态 label 仅高亮变色」原语义）
+    final accent = Tokens.glowAnchors[(glowIndex - 1) % 8].$3;
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
