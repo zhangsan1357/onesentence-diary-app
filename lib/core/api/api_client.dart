@@ -38,6 +38,9 @@ class ServerEntry {
   final int payloadSize;
   final String createdAt;
   final String updatedAt;
+  // 契约增量（2026-11-15 用户拍板）：随机头像 URL——响应时现生成、不落库、
+  // 每次请求都不同（树洞匿名风），与条目内容无关联（02 §0 云端只见密文不破坏）。
+  final String? avatar;
   // 契约缺口防御：sync 列表含 deleted 条目（02 §5.3），字段级定义未列出该字段，
   // 按可选字段兼容（bool/int 均可）。
   final bool deleted;
@@ -51,6 +54,7 @@ class ServerEntry {
     required this.payloadSize,
     required this.createdAt,
     required this.updatedAt,
+    this.avatar,
     this.deleted = false,
   });
 
@@ -65,6 +69,7 @@ class ServerEntry {
       payloadSize: (j['payloadSize'] as num?)?.toInt() ?? 0,
       createdAt: j['createdAt'] as String? ?? '',
       updatedAt: j['updatedAt'] as String? ?? '',
+      avatar: j['avatar'] as String?,
       deleted: d is bool ? d : (d is num ? d != 0 : false),
     );
   }

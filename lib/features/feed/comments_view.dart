@@ -1,10 +1,13 @@
 // 评论视图：懒加载展开后的列表 + 输入行（0 条显示空态文案）。
+// 每条评论配头像（2026-11-15 用户拍板）：cravatar 确定性种子 = 评论身份
+//（who|time|text）——同一条评论稳定、各条互不相同；加载/失败回落原字母圆。
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../core/config/app_defaults.dart';
 import '../../core/model/diary_entry.dart';
 import '../../core/session/app_session.dart';
+import '../../core/util/avatar.dart';
 import '../../features/theme/tokens.dart';
 
 class CommentsView extends ConsumerStatefulWidget {
@@ -56,21 +59,18 @@ class _CommentsViewState extends ConsumerState<CommentsView> {
               child: Row(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Container(
-                    width: 24,
-                    height: 24,
-                    alignment: Alignment.center,
-                    decoration: BoxDecoration(
-                      shape: BoxShape.circle,
-                      color:
-                          AppDefaults.tagColor(c.who).withValues(alpha: .13),
-                    ),
-                    child: Text(
-                      c.who.isEmpty ? '?' : c.who.characters.first,
-                      style: TextStyle(
-                        fontSize: 12,
-                        fontWeight: FontWeight.w700,
-                        color: AppDefaults.tagColor(c.who),
+                  ClipOval(
+                    child: SizedBox(
+                      width: 24,
+                      height: 24,
+                      child: Image.network(
+                        avatarUrl('${c.who}|${c.time}|${c.text}'),
+                        fit: BoxFit.cover,
+                        loadingBuilder: (ctx, child, progress) =>
+                            progress == null
+                                ? child
+                                : _letterAvatar(c, b),
+                        errorBuilder: (_, _, _) => _letterAvatar(c, b),
                       ),
                     ),
                   ),
@@ -153,6 +153,27 @@ class _CommentsViewState extends ConsumerState<CommentsView> {
             ],
           ),
         ],
+      ),
+    );
+  }
+
+  /// 原字母圆（头像加载中/失败的回落，离线测试环境也走这里）。
+  Widget _letterAvatar(EntryComment c, Brightness b) {
+    return Container(
+      width: 24,
+      height: 24,
+      alignment: Alignment.center,
+      decoration: BoxDecoration(
+        shape: BoxShape.circle,
+        color: AppDefaults.tagColor(c.who).withValues(alpha: .13),
+      ),
+      child: Text(
+        c.who.isEmpty ? '?' : c.who.characters.first,
+        style: TextStyle(
+          fontSize: 12,
+          fontWeight: FontWeight.w700,
+          color: AppDefaults.tagColor(c.who),
+        ),
       ),
     );
   }

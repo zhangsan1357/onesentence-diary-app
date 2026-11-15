@@ -116,6 +116,7 @@ class DiaryEntry {
   final String? cipherJson; // Envelope 序列化 JSON（null=未落库）
   final DateTime updatedAt;
   final bool deleted;
+  final String? avatarUrl; // 随机头像 URL（服务端响应现生成，仅内存、不落库）
 
   const DiaryEntry({
     required this.localId,
@@ -125,6 +126,7 @@ class DiaryEntry {
     required this.cipherJson,
     required this.updatedAt,
     this.deleted = false,
+    this.avatarUrl,
   });
 
   DiaryEntry copyWith({
@@ -135,6 +137,7 @@ class DiaryEntry {
     String? cipherJson,
     DateTime? updatedAt,
     bool? deleted,
+    String? avatarUrl,
   }) =>
       DiaryEntry(
         localId: localId ?? this.localId,
@@ -144,6 +147,7 @@ class DiaryEntry {
         cipherJson: cipherJson ?? this.cipherJson,
         updatedAt: updatedAt ?? this.updatedAt,
         deleted: deleted ?? this.deleted,
+        avatarUrl: avatarUrl ?? this.avatarUrl,
       );
 }
 

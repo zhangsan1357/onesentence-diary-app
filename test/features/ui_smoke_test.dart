@@ -50,7 +50,7 @@ void main() {
     expect(find.text('21:14'), findsOneWidget);
     // 天卡片日期盒（11-12 与 11-11 两张卡）
     expect(find.text('12'), findsWidgets);
-    expect(find.text('11月'), findsNWidgets(2));
+    expect(find.textContaining('年11月'), findsNWidgets(2));
   });
 
   testWidgets('feed：展开全文切换', (tester) async {

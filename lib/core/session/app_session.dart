@@ -149,6 +149,9 @@ class AppSession extends Notifier<AppState> {
   UnlockedSession? _session;
   final _api = ApiClient();
   bool _demo = false;
+  // 随机头像（EntryVO.avatar，响应时现生成）按 localId 挂内存条目——不落库，
+  // 重启后由下一次同步重新填充（后端每次请求都会给新头像）。
+  final _avatars = <String, String>{};
 
   /// 面容 ID 解锁桥（测试注入假实现）。
   @visibleForTesting
@@ -762,8 +765,12 @@ class AppSession extends Notifier<AppState> {
       } catch (_) {
         continue; // 无法解密（他设备密文），保留密文等后续
       }
+      final localId = local?.localId ?? _newLocalId();
+      if (se.avatar != null && se.avatar!.isNotEmpty) {
+        _avatars[localId] = se.avatar!;
+      }
       await _upsertLocal(
-        localId: local?.localId ?? _newLocalId(),
+        localId: localId,
         serverId: se.id,
         date: se.entryDate,
         payload: payload,
@@ -787,6 +794,7 @@ class AppSession extends Notifier<AppState> {
               cipherJson: r.cipherJson,
               updatedAt: DateTime.fromMillisecondsSinceEpoch(r.updatedAtMs),
               deleted: r.deleted,
+              avatarUrl: _avatars[r.localId],
             ))
         .toList();
     _set((s) => s.copyWith(entries: entries));

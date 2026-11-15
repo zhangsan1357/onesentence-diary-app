@@ -460,45 +460,38 @@ class DayCardBody extends ConsumerWidget {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
+        // 头部：头像左上（树洞匿名风，服务端响应随机生成）+ 日右上；
+        // 年月收在日下（原「月 + 完整日期」两行重复，2026-11-15 用户去掉）
         Padding(
           padding: const EdgeInsets.fromLTRB(14, 13, 14, 4),
           child: Row(
             children: [
-              SizedBox(
-                width: 36,
-                child: Text(
-                  '${d.day}',
-                  style: TextStyle(
-                    fontSize: 30,
-                    fontWeight: FontWeight.w800,
-                    height: 1,
-                    color: accent,
-                    fontFeatures: const [],
-                  ),
-                ),
-              ),
-              const SizedBox(width: 11),
+              _Avatar(entries.first.avatarUrl, b),
+              const Spacer(),
               Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
+                crossAxisAlignment: CrossAxisAlignment.end,
                 children: [
                   Row(
                     children: [
-                      Text('${d.month}月',
-                          style: TextStyle(
-                              fontSize: 12,
-                              fontWeight: FontWeight.w600,
-                              color: Tokens.label2(b))),
                       if (badge != null) ...[
-                        const SizedBox(width: 5),
                         badge,
+                        const SizedBox(width: 6),
                       ],
+                      Text(
+                        '${d.day}',
+                        style: TextStyle(
+                          fontSize: 30,
+                          fontWeight: FontWeight.w800,
+                          height: 1,
+                          color: accent,
+                          fontFeatures: const [],
+                        ),
+                      ),
                     ],
                   ),
-                  const SizedBox(height: 2),
-                  Text(dateKey,
-                      style: TextStyle(
-                          fontSize: 10,
-                          color: Tokens.label3(b))),
+                  const SizedBox(height: 3),
+                  Text('${d.year}年${d.month}月',
+                      style: TextStyle(fontSize: 10, color: Tokens.label3(b))),
                 ],
               ),
             ],
@@ -508,18 +501,57 @@ class DayCardBody extends ConsumerWidget {
           padding: const EdgeInsets.fromLTRB(14, 2, 14, 6),
           child: Column(
             children: [
-              for (var i = 0; i < entries.length; i++)
+              for (var i = 0; i < entries.length; i++) ...[
+                // 同日内条目分隔：若隐若现（分隔线 = sep 再压暗，对齐正文起点）
+                if (i > 0)
+                  Container(
+                    height: .5,
+                    margin: const EdgeInsets.only(left: 38, right: 6, bottom: 2),
+                    color: Tokens.sep(b).withValues(alpha: .4),
+                  ),
                 EntryView(
                   entry: entries[i],
                   isFirstOfDay: i == 0,
                   weekday: Dates.weekdayNames[d.weekday - 1],
                 ),
+              ],
             ],
           ),
         ),
       ],
     );
   }
+}
+
+/// 圆头像：网络加载，加载中/失败回落占位人形；无 URL 时不占位。
+class _Avatar extends StatelessWidget {
+  final String? url;
+  final Brightness b;
+
+  const _Avatar(this.url, this.b);
+
+  @override
+  Widget build(BuildContext context) {
+    if (url == null || url!.isEmpty) return const SizedBox.shrink();
+    return ClipOval(
+      child: SizedBox(
+        width: 40,
+        height: 40,
+        child: Image.network(
+          url!,
+          fit: BoxFit.cover,
+          loadingBuilder: (ctx, child, progress) =>
+              progress == null ? child : _placeholder(),
+          errorBuilder: (_, _, _) => _placeholder(),
+        ),
+      ),
+    );
+  }
+
+  Widget _placeholder() => Container(
+        color: Tokens.fill(b),
+        child: Icon(Icons.person, size: 20, color: Tokens.label3(b)),
+      );
 }
 
 class _Badge extends StatelessWidget {

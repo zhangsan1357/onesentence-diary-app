@@ -282,8 +282,11 @@ class _CalendarPageState extends ConsumerState<CalendarPage> {
         .take(3)
         .toList();
 
+    // 跨月补位的双休同样红显（稍降透明度与本月区分）——2026-11-15 用户修正
     final numColor = outside
-        ? Tokens.label3(b).withValues(alpha: .55)
+        ? (isWeekend
+            ? Tokens.red(b).withValues(alpha: .55)
+            : Tokens.label3(b).withValues(alpha: .55))
         : isBan
             ? Tokens.orange(b)
             : (isOff || isWeekend)
