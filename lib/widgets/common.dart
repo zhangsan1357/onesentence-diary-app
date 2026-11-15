@@ -1,6 +1,6 @@
 // 共享组件：8 色光晕天卡片、标签 chip、心情、录音胶囊、iOS 行、toast。
 import 'dart:async';
-import 'dart:math' show min, sqrt;
+import 'dart:math' show max, min, sqrt;
 import 'dart:ui';
 
 import 'package:flutter/material.dart';
@@ -348,6 +348,13 @@ class IosRow extends StatelessWidget {
       child: row,
     );
   }
+}
+
+/// 页面大标题顶距（2026-11-16 真机反馈）：岛/刘海机取状态栏安全区+12，
+/// 无刘海环境（web 预览 0）保持原 64 设计值——四个 tab 页大标题统一使用。
+double headerTopPad(BuildContext context) {
+  final t = MediaQuery.paddingOf(context).top + 12;
+  return max(t, 64);
 }
 
 /// 分组容器（我的页 .od2-grp）。

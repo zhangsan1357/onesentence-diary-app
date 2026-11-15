@@ -202,6 +202,12 @@
 5. 测试：**88 项全绿**（新增 3 条：弹窗选项+当前勾选、点击样例通道收到 set、默认=空串映射）。analyze 零告警。CI 首跑两个 Swift 编译错已修（commit 3ec9ed8）：FlutterPlugin 协议要求 `handle` 与类型同级可访问（去 private）、`pluginRegistry.registrar(forPlugin:)` 该版返回可选需解包。
 6. **名字答疑**：桌面显示名= Info.plist `CFBundleDisplayName`（已是「一句话日记」）；`CFBundleName=diary_app` 内部标识不可见。
 
+## 2026-11-16（晨 12）真机反馈两连修：换图标改松散 PNG 路线 + 刘海屏顶距
+
+1. **换图标真机报 `feature is not supported`**（用户截图：弹窗四格/缩略图/构图全对，仅原生 set 失败）：根因=侧载重签包里**资产目录 + ALTERNATE_APP_ICON_NAMES 路线的 supportsAlternateIcons 不可靠**（websearch 证实：备用图标须以 PNG 文件形式在包根 + Info.plist 显式声明）。修复：①`ios/Runner/Icons/` 松散 PNG×6（@2x=120/@3x=180，从 1024 源降采样，RGB 无透明；源图归档 [tool/icons/](tool/icons/)）②[Info.plist](ios/Runner/Info.plist) 显式 `CFBundleIcons` + `CFBundleIcons~ipad` → `CFBundleAlternateIcons`（key 与传参一致，CFBundleIconFiles 基名由系统解析 @2x/@3x）③pbxproj 六处接线（fileRef/buildFile/组/Resources 阶段）④撤 ALTERNATE 构建设置 + 删三个 appiconset（资产目录路线整体退役）。set/get 通道与 Dart/测试契约不变。
+2. **刘海/灵动岛顶距**：四个 tab 页大标题顶距写死 64（岛机安全区 ~62+ 被压住，web 预览 inset=0 又必须保住 64 视觉）→ [common.dart](lib/widgets/common.dart) 统一 `headerTopPad = max(64, 安全区+12)`（岛机 ~74、web 仍 64），me/feed/calendar/memory 四页接入。
+3. 测试 **88 项全绿** + analyze 零告警；web 预览不受影响（inset 0 → 64 原样）。
+
 ## 测试清单（`flutter test` 88 项全绿；后端未启动时 live 14 项自动 SKIP）
 
 - **golden 向量 9 项**（`test/core/e2ee/golden_test.dart`，02 §7 固化向量）：Argon2id masterKey、X25519 公钥推导（clamp）、sharedSecret、HKDF encKey、92B EncryptedCEK 字节布局、AES-GCM cipher+tag 布局、完整 JSON fixture 解密、确定性加密复现完整 JSON、随机往返。**一次实现全绿**，Dart 端与 Go 参考实现逐字节互通。

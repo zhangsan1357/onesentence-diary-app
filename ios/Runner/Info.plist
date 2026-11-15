@@ -24,6 +24,63 @@
 	<string>????</string>
 	<key>CFBundleVersion</key>
 	<string>$(FLUTTER_BUILD_NUMBER)</string>
+	<!-- 备用图标（2026-11-16）：松散 PNG（Icons/ 目录，Copy Bundle Resources）+
+	     显式声明——侧载/重签包里资产目录路线的 supportsAlternateIcons 不可靠。
+	     key 与 setAlternateIconName 传参一致；文件名系统按 @2x/@3x 自动解析。 -->
+	<key>CFBundleIcons</key>
+	<dict>
+		<key>CFBundleAlternateIcons</key>
+		<dict>
+			<key>AppIconNight</key>
+			<dict>
+				<key>CFBundleIconFiles</key>
+				<array>
+					<string>AppIconNight</string>
+				</array>
+			</dict>
+			<key>AppIconPatrick</key>
+			<dict>
+				<key>CFBundleIconFiles</key>
+				<array>
+					<string>AppIconPatrick</string>
+				</array>
+			</dict>
+			<key>AppIconSponge</key>
+			<dict>
+				<key>CFBundleIconFiles</key>
+				<array>
+					<string>AppIconSponge</string>
+				</array>
+			</dict>
+		</dict>
+	</dict>
+	<key>CFBundleIcons~ipad</key>
+	<dict>
+		<key>CFBundleAlternateIcons</key>
+		<dict>
+			<key>AppIconNight</key>
+			<dict>
+				<key>CFBundleIconFiles</key>
+				<array>
+					<string>AppIconNight</string>
+				</array>
+			</dict>
+			<key>AppIconPatrick</key>
+			<dict>
+				<key>CFBundleIconFiles</key>
+				<array>
+					<string>AppIconPatrick</string>
+				</array>
+			</dict>
+			<key>AppIconSponge</key>
+			<dict>
+				<key>CFBundleIconFiles</key>
+				<array>
+					<string>AppIconSponge</string>
+				</array>
+			</dict>
+		</dict>
+	</dict>
 	<key>LSRequiresIPhoneOS</key>
 	<true/>
 	<key>NSFaceIDUsageDescription</key>

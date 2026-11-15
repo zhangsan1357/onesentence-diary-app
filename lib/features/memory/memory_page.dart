@@ -8,6 +8,7 @@ import '../../core/repo/demo_data.dart';
 import '../../core/session/app_session.dart';
 import '../../core/util/dates.dart';
 import '../../features/theme/tokens.dart';
+import '../../widgets/common.dart';
 
 class MemoryPage extends ConsumerStatefulWidget {
   const MemoryPage({super.key});
@@ -55,7 +56,7 @@ class _MemoryPageState extends ConsumerState<MemoryPage> {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Padding(
-            padding: const EdgeInsets.fromLTRB(18, 64, 18, 0),
+            padding: EdgeInsets.fromLTRB(18, headerTopPad(context), 18, 0),
             child: Text('回忆',
                 style: TextStyle(
                     fontSize: 33,

@@ -102,7 +102,7 @@ class _FeedPageState extends ConsumerState<FeedPage> {
           ),
           SliverToBoxAdapter(
           child: Padding(
-            padding: const EdgeInsets.fromLTRB(18, 64, 18, 0),
+            padding: EdgeInsets.fromLTRB(18, headerTopPad(context), 18, 0),
             child: Row(
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [

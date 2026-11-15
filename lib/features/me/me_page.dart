@@ -33,7 +33,7 @@ class MePage extends ConsumerWidget {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Padding(
-            padding: const EdgeInsets.fromLTRB(18, 64, 18, 0),
+            padding: EdgeInsets.fromLTRB(18, headerTopPad(context), 18, 0),
             child: Text('我的',
                 style: TextStyle(
                     fontSize: 33,

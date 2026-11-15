@@ -10,6 +10,7 @@ import '../../core/session/app_session.dart';
 import '../../core/util/dates.dart';
 import '../../features/shell/home_shell.dart';
 import '../../features/theme/tokens.dart';
+import '../../widgets/common.dart';
 
 class CalendarPage extends ConsumerStatefulWidget {
   final void Function(HomeTab) switchTab;
@@ -65,7 +66,7 @@ class _CalendarPageState extends ConsumerState<CalendarPage> {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Padding(
-            padding: const EdgeInsets.fromLTRB(18, 64, 18, 0),
+            padding: EdgeInsets.fromLTRB(18, headerTopPad(context), 18, 0),
             child: Text('日历',
                 style: TextStyle(
                     fontSize: 33,
