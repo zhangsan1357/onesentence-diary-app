@@ -233,6 +233,12 @@
 3. **待同步 `*` 标记**（用户提的「指针」思路 + 三条工程约束）：**只进显示层绝不写载荷**（编辑预填/搜索/导出全消费原始 payload，永不污染）；**橙色 `*`** 与页头「N 条待同步」徽标同色（橙星=这条还没上云）；**精确到部分**——正文改动标正文、离线新增评论按下标标评论（互不误伤）。实现：库 v3 Entries 加 `pendingMeta` 列（JSON `{"t":true,"c":[3,4]}`，评论 append-only 下标稳定，坏 JSON 按无标记处理）；[diary_entry.dart](lib/core/model/diary_entry.dart) `parsePendingMeta/encodePendingMeta` + DiaryEntry.textPending/pendingComments；[app_session.dart](lib/core/session/app_session.dart) `_refreshMarks()` 唯一写入口（库行→内存条目重建标记+计数，杜绝手工维护各处漂移）、入队 merge、**推云成功/冲正成功即清**（推云成功顺带 syncState→0，修掉「干净条目在线推替换仍留 dirty」的边角）；渲染 [common.dart](lib/widgets/common.dart) `pendingMark` + 正文 Text.rich + 评论按 `contains(i)` 标注。
 4. 测试 **111 项全绿**（新增 9：sized 规范化/预取清单收集/URL 缺失占位；pendingMeta 编解码往返+容错/离线发布整条标*/干净条目加评论只标评论/离线编辑标正文（各含冲正清空断言）；正文与评论渲染 `*` 精确标注）。analyze 零告警。踩坑：drift 列名不能叫 `blob`（与 Table.blob 构建器冲突）→ `bytes`（晨 14 补记）。
 
+## 2026-11-16（晨 16）整体设计书落地 + 「设计先行」流程入 AGENTS（用户拍板）
+
+1. **[docs/DESIGN.md](docs/DESIGN.md)** 建立：系统总览（分层/全局不变量/平台范围）+ 离线同步体系完整设计（状态模型/写路径矩阵/冲正算法/拉取保护/待同步标记/头像方案 D/已知取舍/**测试映射**/变更记录）。设计事实源归仓库；冻结契约仍指只读手册套件。
+2. **AGENTS.md 新增「设计先行」**：任何改变 = 先提交设计文档的改变再改代码（顺序①文档②代码③analyze+测试④PROGRESS；偏差时回改文档，不允许代码先行）；测试映射表随设计一并更新。
+3. 无代码改动（本提交纯文档 + 流程）；测试维持 111 项全绿。
+
 ## 测试清单（`flutter test` 111 项全绿；后端未启动时 live 14 项自动 SKIP）
 
 - **golden 向量 9 项**（`test/core/e2ee/golden_test.dart`，02 §7 固化向量）：Argon2id masterKey、X25519 公钥推导（clamp）、sharedSecret、HKDF encKey、92B EncryptedCEK 字节布局、AES-GCM cipher+tag 布局、完整 JSON fixture 解密、确定性加密复现完整 JSON、随机往返。**一次实现全绿**，Dart 端与 Go 参考实现逐字节互通。
