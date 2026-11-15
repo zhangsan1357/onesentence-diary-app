@@ -18,6 +18,30 @@ import '../../widgets/common.dart';
 import '../../widgets/net_avatar.dart';
 import 'comments_view.dart';
 
+/// 平滑加权轮询（SWRR，nginx 同款）：每轮取当前权重最大者，选中者扣减总权重、
+/// 全员叠加自身权重——等权时输出为平滑轮询序列（每项都轮到，不饿死）。
+/// 卡片颜色分配：调用方先洗牌颜色池（每次刷新顺序都不同），SWRR 保证全覆盖轮转。
+/// [rounds] 默认 pool.length；加权验证时传总权重可观察到完整周期。
+List<T> swrrOrder<T>(List<T> pool, {List<int>? weights, int? rounds}) {
+  final w = weights ?? List<int>.filled(pool.length, 1);
+  assert(w.length == pool.length);
+  final cw = List<int>.filled(pool.length, 0);
+  final total = w.fold(0, (a, b) => a + b);
+  final out = <T>[];
+  for (var round = 0; round < (rounds ?? pool.length); round++) {
+    var best = 0;
+    for (var i = 1; i < pool.length; i++) {
+      if (cw[i] > cw[best]) best = i;
+    }
+    out.add(pool[best]);
+    cw[best] -= total;
+    for (var i = 0; i < pool.length; i++) {
+      cw[i] += w[i];
+    }
+  }
+  return out;
+}
+
 class FeedPage extends ConsumerStatefulWidget {
   final void Function(HomeTab t) switchTab;
 
@@ -32,6 +56,23 @@ class _FeedPageState extends ConsumerState<FeedPage> {
   final _searchCtrl = TextEditingController();
   bool _searchOpen = false;
   String _kw = '';
+
+  // 卡片颜色序列 + 评论头像盐（2026-11-16 用户拍板）：启动/每次刷新重掷——
+  // 最新卡片不再恒定同色；SWRR 保证每 8 张覆盖全部 8 色（不饿死），洗牌保证
+  // 每次序列不同；评论动物头像随盐整体换新。
+  final _rng = math.Random();
+  late List<int> _glowSeq = _reshuffleGlow();
+
+  List<int> _reshuffleGlow() {
+    final pool = List<int>.generate(Tokens.glowAnchors.length, (i) => i)
+      ..shuffle(_rng);
+    return swrrOrder(pool);
+  }
+
+  void _rerandomize() {
+    setState(() => _glowSeq = _reshuffleGlow());
+    ref.read(avatarSaltProvider.notifier).state = _rng.nextInt(1 << 31);
+  }
 
   @override
   void dispose() {
@@ -143,12 +184,12 @@ class _FeedPageState extends ConsumerState<FeedPage> {
             return Padding(
               padding: const EdgeInsets.fromLTRB(14, 0, 14, 14),
               child: GlowDayCard(
-                glowIndex: i + 1,
+                glowIndex: _glowSeq[i % _glowSeq.length] + 1,
                 highlighted: g.key == hlKey,
                 child: DayCardBody(
                   dateKey: g.key,
                   entries: g.value,
-                  glowIndex: i + 1,
+                  glowIndex: _glowSeq[i % _glowSeq.length] + 1,
                 ),
               ),
             );
@@ -161,19 +202,23 @@ class _FeedPageState extends ConsumerState<FeedPage> {
   }
 
   /// 下拉刷新：增量同步（缓存为空时自动转全量重建）+ 完成提示（同步静默时用户
-  /// 无感知，会被误以为没有下拉刷新）。
+  /// 无感知，会被误以为没有下拉刷新）。完成/失败后重洗卡片颜色序列（每次刷新
+  /// 都不一样，2026-11-16 用户拍板）。
   Future<void> _refresh() async {
     try {
       await ref.read(appSessionProvider.notifier).syncNow();
       if (mounted) ref.read(appSessionProvider.notifier).showToast('已同步 ✓');
     } catch (_) {
       // 失败进 syncError 横幅；指示器自动收回
+    } finally {
+      if (mounted) _rerandomize();
     }
   }
 
   /// 横幅「重试」：清错误态 → 重注册 + 重同步（内部吞错，失败重新亮横幅）。
   Future<void> _refreshError() async {
     await ref.read(appSessionProvider.notifier).retrySync();
+    if (mounted) _rerandomize();
   }
 
   /// 下拉刷新头（仿原生）：下拉时箭头随拉距旋转（朝下→朝上），超过触发距离变蓝；
@@ -463,7 +508,7 @@ class DayCardBody extends ConsumerWidget {
           padding: const EdgeInsets.fromLTRB(14, 13, 14, 4),
           child: Row(
             children: [
-              NetAvatar(url: entries.first.avatarUrl, size: 40),
+              NetAvatar(url: entries.first.avatarUrl, size: 46),
               const Spacer(),
               Column(
                 crossAxisAlignment: CrossAxisAlignment.end,

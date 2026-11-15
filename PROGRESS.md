@@ -208,7 +208,15 @@
 2. **刘海/灵动岛顶距**：四个 tab 页大标题顶距写死 64（岛机安全区 ~62+ 被压住，web 预览 inset=0 又必须保住 64 视觉）→ [common.dart](lib/widgets/common.dart) 统一 `headerTopPad = max(64, 安全区+12)`（岛机 ~74、web 仍 64），me/feed/calendar/memory 四页接入。
 3. 测试 **88 项全绿** + analyze 零告警；web 预览不受影响（inset 0 → 64 原样）。
 
-## 测试清单（`flutter test` 88 项全绿；后端未启动时 live 14 项自动 SKIP）
+## 2026-11-16（晨 13）卡片颜色 SWRR 洗牌 + 评论头像退回 12 生肖本地动物
+
+1. **卡片颜色不再恒定**（用户点名 SWRR）：此前 glowIndex=列表索引取模 → 最新卡片恒同色。改 [feed_page.dart](lib/features/feed/feed_page.dart)：`swrrOrder`（平滑加权轮询，nginx 同款 current-weight 算法）+ 洗牌起点——启动/下拉刷新/横幅重试后 `_rerandomize()` 重掷 `_glowSeq`，第 i 张卡取 `_glowSeq[i%8]+1`：每 8 张覆盖全部 8 色（不饿死）、每次刷新序列不同。等权时 SWRR=平滑轮询；加权能力保留（`weights`/`rounds` 参数，算法测试覆盖）。
+2. **评论头像退回本地动物图标**（用户拍板）：[animal_avatar.dart](lib/widgets/animal_avatar.dart) `AnimalAvatar`（★配置点 `animalAvatars` 12 生肖表，emoji+专属柔和底色，不好看再增删）；随机性走 `avatarSaltProvider`（刷新盐）——盐变 → 全部评论动物换新，同一刷新周期内同一条评论稳定。评论头像 24→32px（「实在太小」）、天卡头像 40→46px（NetAvatar 后端链接不变）。
+3. **分割线答疑**：同日内第 2 条起才画线（`if (i>0)`），单条日子本就不画——现状已满足，未改。
+4. 踩坑三连：①djb2 乘数 33≡0 (mod 3) → 其值恒为 3 的倍数，对 12 生肖取模时「前缀加盐」系统性失效（实测 18/20 撞同动物）→ 换乘数 31（Java hashCode 同款，与 12 互素）；②`dart run` import 整包撞 drift FFI 编译器 crash（绕开：独立脚本验证哈希）；③Riverpod 3 的 StateProvider 在 `flutter_riverpod/legacy.dart`。
+5. 测试 **94 项全绿**（新增 6：SWRR 等权不饿死/全覆盖/加权平滑性、stableHash 确定性/生肖表 12 互异/渲染冒烟+盐变随机性）。analyze 零告警。
+
+## 测试清单（`flutter test` 94 项全绿；后端未启动时 live 14 项自动 SKIP）
 
 - **golden 向量 9 项**（`test/core/e2ee/golden_test.dart`，02 §7 固化向量）：Argon2id masterKey、X25519 公钥推导（clamp）、sharedSecret、HKDF encKey、92B EncryptedCEK 字节布局、AES-GCM cipher+tag 布局、完整 JSON fixture 解密、确定性加密复现完整 JSON、随机往返。**一次实现全绿**，Dart 端与 Go 参考实现逐字节互通。
 - **恢复词 7 项**（`test/core/session/recovery_words_test.dart`）：BIP39 黄金向量（熵全 0 短语+seed，Node 互证）、生成多轮校验、抄写错误四类拒绝（换词/缺词/词表外/错序）、空白归一化、hex 判定、**diaryPass 动态口令向量（活后端实测）+窗口边界**。
@@ -218,6 +226,7 @@
 - **core 单测 8 项**：tagColor 哈希与 JS 参考实现一致、payload 序列化往返、容错解码、天分组、调休合并/说明行/命中。
 - **UI 冒烟 21 项**（390×844 手机视口）：feed 渲染（**头像头部/年月一行/若隐若现分割线**）/折叠/**下拉刷新头拖拽箭头**/**关键词搜索（正文/标签/无结果/还原）**/**评论展开（第三方随机头像 + 存量 HH:mm 补日期标准格式）**/日历/**跨月双休红显（outside weekend）**/回忆/我的页全行/发布流（标签 chips 点选）/TagChip/标签管理回归/**标签调色板改色（粉→0xFFFF2D55 断言）+ 心情管理列表**/**长按编辑**/**长按删除（二次确认）**/主题三档/**onboarding（12 宫格优先+随机生成+黄金向量提交）/401 横幅**/**ToastHost 3 项**。
 - **App 图标 3 项**（`test/features/app_icon_test.dart`，2026-11-16）：弹窗默认+三样例+当前勾选、点击样例通道 set、默认=空串映射（原生 setAlternateIconName(nil)）。MethodChannel mock。
+- **SWRR 算法 3 项 + 动物头像 3 项**（`test/features/swrr_test.dart`、`animal_avatar_test.dart`，2026-11-16）：等权平滑轮询不饿死/全覆盖/加权平滑性（[1,1,2] 四轮 c×2 不相邻）；stableHash 确定性/12 生肖表互异/渲染冒烟+盐变随机性。
 - **显示配置 4 项**（`test/core/session/display_cfg_test.dart`）：标签库增删（初始含默认三项）+ KV 重载（'[]' 空库语义）、调色板覆盖/恢复自动/非法色名忽略、心情增删改（默认仅改显示）+ KV 重载、cfgVersion 自增。MemoryLocalStore 注入 + debugLoadCfg 钩子；静态表 setUp/tearDown 复位防污染。
 - **光晕像素采样 2 项**（`test/features/glow_pixel_test.dart`；深色期望改为可见 Δ≥4 ≤48——用户覆盖原版 0.15）。
 - **live 集成 14 项**（`test/live/integration_live_test.dart`）：原 11 项回归（全程隐式验证 X-Diary-Pass）+ M3-12 动态口令 401 + M3-13 多设备共享 + M3-14 冒名拒绝。**2026-11-14 后端 v4 实测 14/14 全绿**（未启动自动 SKIP）。

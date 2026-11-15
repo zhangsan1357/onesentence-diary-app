@@ -1,16 +1,22 @@
 // 评论视图：懒加载展开后的列表 + 输入行（0 条显示空态文案）。
-// 每条评论配头像：评论在端上密文内、后端不可见无法注入链接 → 客户端按
-// core/util/avatar.dart 同款模板（与后端定稿格式一致）确定性拼装，种子 =
-// 评论身份（who|time|text），同一条评论稳定、各条互不相同；失败回落中性人形。
-// 时间显示标准格式 yyyy-MM-dd HH:mm。
+// 每条评论配头像（2026-11-16 用户拍板退回本地动物图标、扩到 12 种）：
+// 评论在端上密文内、后端不可见 → AnimalAvatar 本地绘制，种子 =
+// 刷新盐 + 评论身份（who|time|text）——同一刷新周期内同一条评论稳定，
+// 每次刷新（下拉/横幅重试/重启）盐重掷 → 全部评论换新动物。时间显示
+// 标准格式 yyyy-MM-dd HH:mm。
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+// StateProvider 在 Riverpod 3 收进 legacy（一个可变 int 的最简载体）
+import 'package:flutter_riverpod/legacy.dart' show StateProvider;
 
 import '../../core/model/diary_entry.dart';
 import '../../core/session/app_session.dart';
-import '../../core/util/avatar.dart';
 import '../../features/theme/tokens.dart';
-import '../../widgets/net_avatar.dart';
+import '../../widgets/animal_avatar.dart';
+
+/// 评论头像刷新盐（2026-11-16）：feed 页每次刷新重掷 → 全部评论动物换新
+/// （随机性语义与卡片颜色序列一致）。
+final avatarSaltProvider = StateProvider<int>((ref) => 0);
 
 class CommentsView extends ConsumerStatefulWidget {
   final DiaryEntry entry;
@@ -33,6 +39,7 @@ class _CommentsViewState extends ConsumerState<CommentsView> {
   @override
   Widget build(BuildContext context) {
     final b = Theme.of(context).brightness;
+    final salt = ref.watch(avatarSaltProvider);
     final comments = widget.entry.payload.comments;
 
     return Container(
@@ -61,9 +68,8 @@ class _CommentsViewState extends ConsumerState<CommentsView> {
               child: Row(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  NetAvatar(
-                      url: avatarUrl('${c.who}|${c.time}|${c.text}'),
-                      size: 24),
+                  AnimalAvatar(
+                      seed: '$salt|${c.who}|${c.time}|${c.text}', size: 32),
                   const SizedBox(width: 8),
                   Expanded(
                     child: Column(

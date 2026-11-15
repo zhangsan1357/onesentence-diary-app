@@ -6,6 +6,7 @@ import 'package:diary_app/core/session/app_session.dart';
 import 'package:diary_app/features/compose/compose_page.dart';
 import 'package:diary_app/features/onboarding/onboarding_page.dart';
 import 'package:diary_app/main.dart';
+import 'package:diary_app/widgets/animal_avatar.dart';
 import 'package:diary_app/widgets/common.dart';
 import 'package:diary_app/widgets/net_avatar.dart';
 import 'package:flutter/material.dart';
@@ -62,8 +63,9 @@ void main() {
     // 展开首条（11-12，2 条评论）的评论列表
     await tester.tap(find.byIcon(Icons.mode_comment_outlined).first);
     await tester.pumpAndSettle();
-    // 每条评论一个头像（2 天卡 + 2 评论）
-    expect(find.byType(NetAvatar), findsNWidgets(4));
+    // 每条评论一个动物头像（2 天卡 NetAvatar + 2 评论 AnimalAvatar）
+    expect(find.byType(NetAvatar), findsNWidgets(2));
+    expect(find.byType(AnimalAvatar), findsNWidgets(2));
     // 存量 HH:mm 评论补条目日期 → 标准格式
     expect(find.text('2026-11-12 21:30'), findsOneWidget);
     expect(find.text('2026-11-12 22:05'), findsOneWidget);
