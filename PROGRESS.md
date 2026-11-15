@@ -206,7 +206,7 @@
 
 1. **换图标真机报 `feature is not supported`**（用户截图：弹窗四格/缩略图/构图全对，仅原生 set 失败）：根因=侧载重签包里**资产目录 + ALTERNATE_APP_ICON_NAMES 路线的 supportsAlternateIcons 不可靠**（websearch 证实：备用图标须以 PNG 文件形式在包根 + Info.plist 显式声明）。修复：①`ios/Runner/Icons/` 松散 PNG×6（@2x=120/@3x=180，从 1024 源降采样，RGB 无透明；源图归档 [tool/icons/](tool/icons/)）②[Info.plist](ios/Runner/Info.plist) 显式 `CFBundleIcons` + `CFBundleIcons~ipad` → `CFBundleAlternateIcons`（key 与传参一致，CFBundleIconFiles 基名由系统解析 @2x/@3x）③pbxproj 六处接线（fileRef/buildFile/组/Resources 阶段）④撤 ALTERNATE 构建设置 + 删三个 appiconset（资产目录路线整体退役）。set/get 通道与 Dart/测试契约不变。
 2. **刘海/灵动岛顶距**：四个 tab 页大标题顶距写死 64（岛机安全区 ~62+ 被压住，web 预览 inset=0 又必须保住 64 视觉）→ [common.dart](lib/widgets/common.dart) 统一 `headerTopPad = max(64, 安全区+12)`（岛机 ~74、web 仍 64），me/feed/calendar/memory 四页接入。
-3. 测试 **88 项全绿** + analyze 零告警；web 预览不受影响（inset 0 → 64 原样）。**CI 后补坑**（commit 22cb08e）：`ios/.gitignore` 模板的 `Icon?` 规则恰好匹配 `Icons/` 目录名，6 张松散 PNG 上轮没进仓库（本地 ls 有、CI 检出没有 → xcodebuild 找不到构建输入）——`!Icons/` 显式放行并补提交。
+3. 测试 **88 项全绿** + analyze 零告警；web 预览不受影响（inset 0 → 64 原样）。**CI 后补坑两层**（commit 22cb08e + 6cf24c0）：①`ios/.gitignore` 模板的 `Icon?` 规则恰好匹配 `Icons/` 目录名，6 张松散 PNG 没进首仓——`!Icons/` 放行并补提交；②补提交后 CI 仍缺文件——**生成脚本文件名 `@2.png/@3.png` 少了 x**，与 pbxproj 引用（及 iOS 系统解析要求的）`@2x/@3x` 差一字符——git mv 修正 + 引用/文件名一致性脚本校验（refs 6 missing 0）。教训：生成产物名与构建引用名要过一致性断言，本地不构建 iOS 时 CI 是唯一验证点。
 
 ## 2026-11-16（晨 13）卡片颜色 SWRR 洗牌 + 评论头像退回 12 生肖本地动物
 
