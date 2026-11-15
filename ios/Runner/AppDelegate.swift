@@ -12,7 +12,9 @@ import UIKit
 
   func didInitializeImplicitFlutterEngine(_ engineBridge: FlutterImplicitEngineBridge) {
     GeneratedPluginRegistrant.register(with: engineBridge.pluginRegistry)
-    AppIconPlugin.register(with: engineBridge.pluginRegistry.registrar(forPlugin: "AppIconPlugin"))
+    if let registrar = engineBridge.pluginRegistry.registrar(forPlugin: "AppIconPlugin") {
+      AppIconPlugin.register(with: registrar)
+    }
   }
 }
 
@@ -27,7 +29,8 @@ class AppIconPlugin: NSObject, FlutterPlugin {
     registrar.addMethodCallDelegate(AppIconPlugin(), channel: channel)
   }
 
-  private func handle(_ call: FlutterMethodCall, result: @escaping FlutterResult) {
+  /// FlutterPlugin 协议要求 handle 与类型同级可访问（不能 private）。
+  func handle(_ call: FlutterMethodCall, result: @escaping FlutterResult) {
     switch call.method {
     case "get":
       result(UIApplication.shared.alternateIconName)
