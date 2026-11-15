@@ -199,7 +199,7 @@
 2. **iOS 备用图标机制**（`setAlternateIconName`，iOS 10.3+ 公开 API）：Assets.xcassets 新增 AppIconNight/Patrick/Sponge 三个单尺寸 appiconset（1024×1024 RGB 无透明，Xcode 14 单尺寸格式）；[project.pbxproj](ios/Runner.xcodeproj/project.pbxproj) 三处 Runner 配置（Debug/Profile/Release）加 `ASSETCATALOG_COMPILER_ALTERNATE_APP_ICON_NAMES`，不动 Info.plist。
 3. **原生通道**（[AppDelegate.swift](ios/Runner/AppDelegate.swift)）：AppIconPlugin（FlutterPlugin，在模板 `didInitializeImplicitFlutterEngine` 扩展点注册，scene 生命周期安全）——`get` 当前名 / `set(name)`（空串=恢复默认 `setAlternateIconName(nil)`）；成功后 iOS 自动弹系统确认框。
 4. **Flutter 侧**：[lib/core/app_icon.dart](lib/core/app_icon.dart)（choices 三元组 + supported 门控 `!kIsWeb && defaultTargetPlatform==iOS`）+「我的」页配置组新增「App 图标」行（仅 iOS 显示）+ [dialogs.dart](lib/features/me/dialogs.dart) `showAppIconDialog`（默认+3 格缩略图、当前勾选、失败红字降级；缩略图走 `assets/appicon/` 240px 预览）。web 预览自动隐藏该行。
-5. 测试：**88 项全绿**（新增 3 条：弹窗选项+当前勾选、点击样例通道收到 set、默认=空串映射）。analyze 零告警。
+5. 测试：**88 项全绿**（新增 3 条：弹窗选项+当前勾选、点击样例通道收到 set、默认=空串映射）。analyze 零告警。CI 首跑两个 Swift 编译错已修（commit 3ec9ed8）：FlutterPlugin 协议要求 `handle` 与类型同级可访问（去 private）、`pluginRegistry.registrar(forPlugin:)` 该版返回可选需解包。
 6. **名字答疑**：桌面显示名= Info.plist `CFBundleDisplayName`（已是「一句话日记」）；`CFBundleName=diary_app` 内部标识不可见。
 
 ## 测试清单（`flutter test` 88 项全绿；后端未启动时 live 14 项自动 SKIP）
