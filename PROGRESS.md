@@ -177,12 +177,21 @@
 3. 真机验收路径确认：iOS 无 CORS，后端 cravatar 链接直接可用；web 预览 CORS 限制仍在（晨 7 记录，两案待拍板：Chrome 扩展 / serve.js 代理）。
 4. 测试：**82 项全绿** + analyze 零告警。
 
-## 测试清单（`flutter test` 82 项全绿；后端未启动时 live 14 项自动 SKIP）
+## 2026-11-15（晨 9）安全加固：P0×2 + P1×2 全落地（用户拍板）
+
+1. **P0-1 ATS 收紧**（[Info.plist](ios/Runner/Info.plist)）：删 `NSAllowsArbitraryLoads=true`（调试期任意明文）→ 改 `NSAllowsLocalNetworking=true`——公网强制 HTTPS，本地网络（后端 127.0.0.1 / 局域网 9060 联调）明文例外；将来服务端上公网 HTTPS 可整段移除。
+2. **P0-2 默认安全基线 · 锁定口令引导**：`AppState.needsPass`（createIdentity/loginIdentity[未开锁]/setName 后置位，logout 复位）→ [PassSetupPage](lib/features/onboarding/pass_setup_page.dart)（路由门 `needsPass && unlocked`）：开启锁定（≥6 位口令×2 确认，setLockEnabled=Argon2id 重包裹）或「暂不设置」——跳过后果红字明示（私钥明文落盘、拿到手机可直接阅读全部日记）。
+3. **P1-3 本地明文根治**：Entry 表 `payloadJson` 列**复用存密文 JSON**（免 schema 迁移），落盘零明文；`_loadLocalEntries` 解密重建内存索引（解密失败跳过渲染、密文保留）；**旧明文行自动迁移**（payloadJson 含 'text' 键判旧格式 → 重写为密文，一次性）；**同步循环不再解密**（他设备密文原样落库，读取时才解密——「无法解密 continue」分支自然消解）。`_upsertLocal` 去掉 payload 参数（4 处调用同步）。
+4. **P1-4 锁定清内存**：`lock()` 清 `_avatars` + `entries`（此前明文条目驻留内存到进程结束）；解锁路径（unlock/unlockBiometric）已有 `_loadLocalEntries` 重载 ✓。
+5. 测试：**85 项全绿**（新增 3 条安全回归：落盘零明文+解密重建、needsPass 引导状态机、lock 清内存+解锁重建；`debugReloadEntries` 测试钩子）。analyze 零告警。
+6. 未做（评估中的 P2，待拍板）：剪贴板自动清空、token/keystore 迁 Keychain、TLS pinning、依赖 CVE 审计、导出明文提示。
+
+## 测试清单（`flutter test` 85 项全绿；后端未启动时 live 14 项自动 SKIP）
 
 - **golden 向量 9 项**（`test/core/e2ee/golden_test.dart`，02 §7 固化向量）：Argon2id masterKey、X25519 公钥推导（clamp）、sharedSecret、HKDF encKey、92B EncryptedCEK 字节布局、AES-GCM cipher+tag 布局、完整 JSON fixture 解密、确定性加密复现完整 JSON、随机往返。**一次实现全绿**，Dart 端与 Go 参考实现逐字节互通。
 - **恢复词 7 项**（`test/core/session/recovery_words_test.dart`）：BIP39 黄金向量（熵全 0 短语+seed，Node 互证）、生成多轮校验、抄写错误四类拒绝（换词/缺词/词表外/错序）、空白归一化、hex 判定、**diaryPass 动态口令向量（活后端实测）+窗口边界**。
 - **身份 6 项**（`test/core/session/identity_test.dart`）：同短语同身份、异短语异身份、**hex 导入=短语导入往返**、空白归一化、deviceNo 随机 UUID v4（不复用）、非法输入拒绝。
-- **身份流程 7 项**（`test/core/session/identity_flow_test.dart`）：createIdentity 落盘/校验失败不留痕/注册名 gate、loginIdentity 同词同公钥（跨设备等价）/词校验拒绝、存量补设注册名（deviceNo 保留）、**注销账号（KV 全清 + 状态回引导 + 原词可重登）**。MemoryLocalStore 注入（debugUseStore/debugRestorePlainSession 钩子）。
+- **身份流程 10 项**（`test/core/session/identity_flow_test.dart`）：createIdentity 落盘/校验失败不留痕/注册名 gate、loginIdentity 同词同公钥（跨设备等价）/词校验拒绝、存量补设注册名（deviceNo 保留）、**注销账号（KV 全清 + 状态回引导 + 原词可重登）**、**P1-3 落盘零明文（库行只有密文 + 解密重建）**、**P0-2 needsPass 引导状态机**、**P1-4 lock 清内存明文（解锁后从密文重建）**。MemoryLocalStore 注入（debugUseStore/debugRestorePlainSession/debugReloadEntries 钩子）。
 - **面容解锁 4 项**（`test/core/session/bio_unlock_test.dart`）：启用（生物识别确认 → 私钥入库 + ui.bio）、锁定后面容免口令解锁（bio-missing 回退信号 + 口令回退仍可用）、拒绝启用（识别未过/设备不可用）+ 关闭清除、注销清除钥匙串存档。FakeBioVault 注入。
 - **core 单测 8 项**：tagColor 哈希与 JS 参考实现一致、payload 序列化往返、容错解码、天分组、调休合并/说明行/命中。
 - **UI 冒烟 21 项**（390×844 手机视口）：feed 渲染（**头像头部/年月一行/若隐若现分割线**）/折叠/**下拉刷新头拖拽箭头**/**关键词搜索（正文/标签/无结果/还原）**/**评论展开（第三方随机头像 + 存量 HH:mm 补日期标准格式）**/日历/**跨月双休红显（outside weekend）**/回忆/我的页全行/发布流（标签 chips 点选）/TagChip/标签管理回归/**标签调色板改色（粉→0xFFFF2D55 断言）+ 心情管理列表**/**长按编辑**/**长按删除（二次确认）**/主题三档/**onboarding（12 宫格优先+随机生成+黄金向量提交）/401 横幅**/**ToastHost 3 项**。

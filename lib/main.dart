@@ -5,6 +5,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'core/session/app_session.dart';
 import 'features/me/dialogs.dart';
 import 'features/onboarding/onboarding_page.dart';
+import 'features/onboarding/pass_setup_page.dart';
 import 'features/shell/home_shell.dart';
 import 'features/theme/tokens.dart';
 
@@ -92,6 +93,10 @@ class _DiaryAppState extends ConsumerState<DiaryApp> with WidgetsBindingObserver
         onSetName: (name) =>
             ref.read(appSessionProvider.notifier).setName(name),
       );
+    }
+    // 锁定口令引导（身份建立后一次性，2026-11-15 P0 默认安全基线）
+    if (s.needsPass && s.unlocked) {
+      return const PassSetupPage();
     }
     return const HomeShell();
   }

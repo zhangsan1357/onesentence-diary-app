@@ -64,6 +64,7 @@ class AppState {
   final String serverBase; // 服务端地址（客户端配置，所有接口拼接）
   final bool needsOnboarding; // 首次启动 · 生成身份（①）——无 keystore 时引导
   final bool needsName; // 存量 keystore 补设注册名（一次性）
+  final bool needsPass; // 身份建立后的锁定口令引导（2026-11-15 P0 默认安全基线）
   final String userId; // 注册名（终身不变，多设备共用）
   final String? syncError; // 最近一次同步失败（401 横幅/重试入口；null=正常）
   final bool bioUnlock; // 面容 ID 解锁（私钥存生物识别保护的钥匙串）
@@ -86,6 +87,7 @@ class AppState {
     this.serverBase = apiBase,
     this.needsOnboarding = false,
     this.needsName = false,
+    this.needsPass = false,
     this.userId = '',
     this.syncError,
     this.bioUnlock = false,
@@ -111,6 +113,7 @@ class AppState {
     String? serverBase,
     bool? needsOnboarding,
     bool? needsName,
+    bool? needsPass,
     String? userId,
     String? syncError,
     bool clearHighlight = false,
@@ -137,6 +140,7 @@ class AppState {
         serverBase: serverBase ?? this.serverBase,
         needsOnboarding: needsOnboarding ?? this.needsOnboarding,
         needsName: needsName ?? this.needsName,
+        needsPass: needsPass ?? this.needsPass,
         userId: userId ?? this.userId,
         syncError: clearSyncError ? null : (syncError ?? this.syncError),
         bioUnlock: bioUnlock ?? this.bioUnlock,
@@ -190,6 +194,10 @@ class AppSession extends Notifier<AppState> {
       needsName: ks.userId.isEmpty,
     );
   }
+
+  /// 测试钩子：从密文重建内存条目索引（P1-3/P1-4 安全单测用）。
+  @visibleForTesting
+  Future<void> debugReloadEntries() => _loadLocalEntries();
 
   Future<void> init() async {
     if (state.ready) return;
@@ -380,7 +388,9 @@ class AppSession extends Notifier<AppState> {
   void lock() {
     if (!state.lockEnabled) return; // 锁定保护关闭：不锁
     _session = null;
-    state = state.copyWith(locked: true);
+    _avatars.clear();
+    // 清空内存明文（P1-4 纵深防御）：解锁后 _loadLocalEntries 从密文重建
+    state = state.copyWith(locked: true, entries: const []);
   }
 
   /// 后台路径的状态回写：异步间隙后容器可能已释放（测试收尾/热重载）→ 静默丢弃。
@@ -415,6 +425,7 @@ class AppSession extends Notifier<AppState> {
       hasKeystore: true,
       needsOnboarding: false,
       needsName: false,
+      needsPass: true, // 锁定口令引导（默认安全基线，2026-11-15 P0）
       userId: name,
       locked: false,
       entries: [],
@@ -469,6 +480,7 @@ class AppSession extends Notifier<AppState> {
       hasKeystore: true,
       needsOnboarding: false,
       needsName: false,
+      needsPass: !state.lockEnabled, // 新设备引导设口令；本机已开锁定则不重复引导
       userId: name,
       locked: false,
       entries: [],
@@ -502,11 +514,18 @@ class AppSession extends Notifier<AppState> {
     await _persistKeystore(newKs);
     state = state.copyWith(
       needsName: false,
+      needsPass: !state.lockEnabled, // 存量身份补设注册名后同样引导设口令
       userId: name,
       clearSyncError: true,
       toast: '注册名已设置 · 同步中',
     );
     unawaited(_registerAndSync());
+  }
+
+  /// 锁定口令引导完成（开了锁定或跳过）：进入主界面。
+  /// 开启锁定本身由 PassSetupPage 调 setLockEnabled 完成。
+  void finishPassSetup() {
+    _set((s) => s.copyWith(needsPass: false));
   }
 
   /// 注销账号（本机）：清除 keystore/令牌/同步游标/显示配置与本地数据索引，回到生成身份引导。
@@ -545,6 +564,7 @@ class AppSession extends Notifier<AppState> {
       locked: true,
       needsOnboarding: true,
       needsName: false,
+      needsPass: false,
       userId: '',
       entries: [],
       bioUnlock: false,
@@ -764,18 +784,11 @@ class AppSession extends Notifier<AppState> {
         }
         continue;
       }
-      EntryPayload payload;
-      try {
-        final bytes = await Envelope.decrypt(cipherJson, _session!.privateKey);
-        payload = EntryPayload.decode(utf8.decode(bytes));
-      } catch (_) {
-        continue; // 无法解密（他设备密文），保留密文等后续
-      }
+      // 落盘只存密文（P1-3）：同步不再解密（他设备密文原样保留，读取时才解密）
       await _upsertLocal(
         localId: localId,
         serverId: se.id,
         date: se.entryDate,
-        payload: payload,
         cipherJson: cipherJson,
         updatedAtMs: _isoToMs(se.updatedAt),
         deleted: false,
@@ -786,18 +799,60 @@ class AppSession extends Notifier<AppState> {
 
   Future<void> _loadLocalEntries() async {
     final rows = await _db!.allEntries();
-    final entries = rows
-        .map((r) => DiaryEntry(
-              localId: r.localId,
-              serverId: r.serverId,
-              date: r.entryDate,
-              payload: EntryPayload.decode(r.payloadJson),
-              cipherJson: r.cipherJson,
-              updatedAt: DateTime.fromMillisecondsSinceEpoch(r.updatedAtMs),
-              deleted: r.deleted,
-              avatarUrl: _avatars[r.localId],
-            ))
-        .toList();
+    final entries = <DiaryEntry>[];
+    for (final r in rows) {
+      // 落盘只存密文（P1-3 本地明文根治）：读取时解密进内存；旧版本落过明文
+      // payloadJson → 含 'text' 键即旧格式，顺手重写为密文（一次性迁移）。
+      // 解密失败（损坏密文）→ 跳过渲染（密文仍在库，不丢数据）。
+      final cipher = r.cipherJson;
+      final priv = _session?.privateKey;
+      EntryPayload? payload;
+      var legacyPlain = false;
+      if (cipher != null && cipher.isNotEmpty && priv != null) {
+        try {
+          final bytes = await Envelope.decrypt(cipher, priv);
+          payload = EntryPayload.decode(utf8.decode(bytes));
+        } catch (_) {
+          continue;
+        }
+        try {
+          final j = jsonDecode(r.payloadJson) as Map<String, dynamic>;
+          legacyPlain = j.containsKey('text');
+        } catch (_) {}
+      } else if (cipher == null || cipher.isEmpty) {
+        // 无密文行（仅旧数据/异常路径）：明文兜底展示
+        try {
+          final j = jsonDecode(r.payloadJson) as Map<String, dynamic>;
+          if (j.containsKey('text')) {
+            payload = EntryPayload.decode(r.payloadJson);
+          }
+        } catch (_) {}
+        if (payload == null) continue;
+      } else {
+        continue; // 有密文但无解锁会话：不入内存
+      }
+      if (legacyPlain) {
+        await _db!.upsertEntry(db.EntriesCompanion.insert(
+          localId: r.localId,
+          serverId: driftValue(r.serverId),
+          entryDate: r.entryDate,
+          payloadJson: cipher!, // legacyPlain 只在 cipher 非空分支置位
+          cipherJson: driftStr(cipher),
+          updatedAtMs: r.updatedAtMs,
+          deleted: driftBool(r.deleted),
+        ));
+      }
+      entries.add(DiaryEntry(
+        localId: r.localId,
+        serverId: r.serverId,
+        date: r.entryDate,
+        payload: payload,
+        cipherJson: cipher,
+        updatedAt: DateTime.fromMillisecondsSinceEpoch(r.updatedAtMs),
+        deleted: r.deleted,
+        avatarUrl: _avatars[r.localId],
+      ));
+    }
     _set((s) => s.copyWith(entries: entries));
   }
 
@@ -805,16 +860,17 @@ class AppSession extends Notifier<AppState> {
     required String localId,
     int? serverId,
     required String date,
-    required EntryPayload payload,
     String? cipherJson,
     required int updatedAtMs,
     bool deleted = false,
   }) async {
+    // 落盘零明文（P1-3）：payloadJson 列复用存密文 JSON（免 schema 迁移），
+    // 解密只在读取（_loadLocalEntries）时发生。
     await _db!.upsertEntry(db.EntriesCompanion.insert(
       localId: localId,
       serverId: driftValue(serverId),
       entryDate: date,
-      payloadJson: jsonEncode(payload.toJson()),
+      payloadJson: cipherJson ?? '',
       cipherJson: driftStr(cipherJson),
       updatedAtMs: updatedAtMs,
       deleted: driftBool(deleted),
@@ -920,7 +976,6 @@ class AppSession extends Notifier<AppState> {
       localId: entry.localId,
       serverId: serverId,
       date: date,
-      payload: payload,
       cipherJson: cipherJson,
       updatedAtMs: now.millisecondsSinceEpoch,
     );
@@ -976,7 +1031,6 @@ class AppSession extends Notifier<AppState> {
         localId: entry.localId,
         serverId: entry.serverId,
         date: entry.date,
-        payload: entry.payload,
         cipherJson: entry.cipherJson,
         updatedAtMs: now.millisecondsSinceEpoch,
         deleted: true,
@@ -1076,7 +1130,6 @@ class AppSession extends Notifier<AppState> {
       localId: entry.localId,
       serverId: entry.serverId,
       date: entry.date,
-      payload: entry.payload,
       cipherJson: cipherJson,
       updatedAtMs: entry.updatedAt.millisecondsSinceEpoch,
     );

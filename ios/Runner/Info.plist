@@ -34,8 +34,9 @@
 	<string>录制语音日记</string>
 	<key>NSAppTransportSecurity</key>
 	<dict>
-		<!-- 调试期明文 HTTP（03 §3.1）；正式包改回并只保留局域网例外 -->
-		<key>NSAllowsArbitraryLoads</key>
+		<!-- ATS 收紧（2026-11-15 用户拍板 P0）：公网强制 HTTPS；仅本地网络明文例外
+		     （后端 127.0.0.1 / 局域网 9060 联调）。将来服务端上公网 HTTPS 可整段移除。 -->
+		<key>NSAllowsLocalNetworking</key>
 		<true/>
 	</dict>
 	<key>UIApplicationSceneManifest</key>
