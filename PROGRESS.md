@@ -226,7 +226,14 @@
    - **UI**：时光页头部「N 条待同步」橙色徽标（pendingCount>0 时显示）。
 3. 测试 **102 项全绿**（新增 8：头像表改版 1 + 离线队列 7——发布入队/冲正新建+幂等/评论待替换/删除待删除/离线新建再删直除/中途断网续传/媒体暂存注入）。analyze 零告警。
 
-## 测试清单（`flutter test` 102 项全绿；后端未启动时 live 14 项自动 SKIP）
+## 2026-11-16（晨 15）头像刷新提速方案 D（预取+淡入）+ 待同步 `*` 标记（用户拍板）
+
+1. **头像慢的实测定位**（curl 5 连测）：cravatar CDN 新 hash 首字节 **4.5~6.1s**（服务端生成/回源），同 hash 二次 **0.16s**（边缘命中，30 倍差）；DNS/TCP/TLS ≤0.17s、图片本体 <4KB——慢不在网络，在「每次刷新 URL 换新 → 每张都打 CDN 冷缓存」。CDN 侧 `cache-control: max-age=300` 也短，客户端绕不开服务端时间。
+2. **方案 D 落地**（用户从 A~F 方案中拍板先做 D）：①[feed_page.dart](lib/features/feed/feed_page.dart) 构建时对未取过的天卡头像 `precacheImage` 并行预热（`dayAvatarUrls` 收集去重，★onError 必传——precacheImage 不传 onError 会走 FlutterError.reportError，widget 测试环境判失败）②[net_avatar.dart](lib/widgets/net_avatar.dart) 占位垫底 + 图就绪 250ms 淡入（AnimatedOpacity），预取命中首帧即显无动画。感知：列表结构与头像同帧出现、无灰圆突跳；CDN 冷缓存的墙要 A/B 方案（后端池）才拆。
+3. **待同步 `*` 标记**（用户提的「指针」思路 + 三条工程约束）：**只进显示层绝不写载荷**（编辑预填/搜索/导出全消费原始 payload，永不污染）；**橙色 `*`** 与页头「N 条待同步」徽标同色（橙星=这条还没上云）；**精确到部分**——正文改动标正文、离线新增评论按下标标评论（互不误伤）。实现：库 v3 Entries 加 `pendingMeta` 列（JSON `{"t":true,"c":[3,4]}`，评论 append-only 下标稳定，坏 JSON 按无标记处理）；[diary_entry.dart](lib/core/model/diary_entry.dart) `parsePendingMeta/encodePendingMeta` + DiaryEntry.textPending/pendingComments；[app_session.dart](lib/core/session/app_session.dart) `_refreshMarks()` 唯一写入口（库行→内存条目重建标记+计数，杜绝手工维护各处漂移）、入队 merge、**推云成功/冲正成功即清**（推云成功顺带 syncState→0，修掉「干净条目在线推替换仍留 dirty」的边角）；渲染 [common.dart](lib/widgets/common.dart) `pendingMark` + 正文 Text.rich + 评论按 `contains(i)` 标注。
+4. 测试 **111 项全绿**（新增 9：sized 规范化/预取清单收集/URL 缺失占位；pendingMeta 编解码往返+容错/离线发布整条标*/干净条目加评论只标评论/离线编辑标正文（各含冲正清空断言）；正文与评论渲染 `*` 精确标注）。analyze 零告警。踩坑：drift 列名不能叫 `blob`（与 Table.blob 构建器冲突）→ `bytes`（晨 14 补记）。
+
+## 测试清单（`flutter test` 111 项全绿；后端未启动时 live 14 项自动 SKIP）
 
 - **golden 向量 9 项**（`test/core/e2ee/golden_test.dart`，02 §7 固化向量）：Argon2id masterKey、X25519 公钥推导（clamp）、sharedSecret、HKDF encKey、92B EncryptedCEK 字节布局、AES-GCM cipher+tag 布局、完整 JSON fixture 解密、确定性加密复现完整 JSON、随机往返。**一次实现全绿**，Dart 端与 Go 参考实现逐字节互通。
 - **恢复词 7 项**（`test/core/session/recovery_words_test.dart`）：BIP39 黄金向量（熵全 0 短语+seed，Node 互证）、生成多轮校验、抄写错误四类拒绝（换词/缺词/词表外/错序）、空白归一化、hex 判定、**diaryPass 动态口令向量（活后端实测）+窗口边界**。
@@ -238,6 +245,7 @@
 - **App 图标 3 项**（`test/features/app_icon_test.dart`，2026-11-16）：弹窗默认+三样例+当前勾选、点击样例通道 set、默认=空串映射（原生 setAlternateIconName(nil)）。MethodChannel mock。
 - **SWRR 算法 3 项 + 动物头像 4 项**（`test/features/swrr_test.dart`、`animal_avatar_test.dart`，2026-11-16）：等权平滑轮询不饿死/全覆盖/加权平滑性（[1,1,2] 四轮 c×2 不相邻）；stableHash 确定性/原版 20 动物脸表互异/裸 emoji 渲染无底色/盐变随机性。
 - **离线队列 7 项**（`test/features/offline_sync_test.dart`，2026-11-16 晨 14）：发布断网本地入队（syncState=1+计数+提示）、手动刷新冲正新建+幂等不重放、评论断网待替换（syncState=2 → 冲正推替换且评论在密文内）、删除已同步条目断网待删除（syncState=3 → 冲正推删除）、离线新建再删本地直除、冲正中途断网已推清队未推保留（下次刷新续传）、带图发布断网媒体加密暂存 → 冲正上传注入引用。FakeApi 注入（debugUseApi，online 开关模拟断网/恢复，DioException=断网信号）。
+- **头像预取/淡入 3 项 + 待同步标记 6 项**（`test/features/net_avatar_test.dart`、`offline_sync_test.dart` 标记 4 项、`pending_mark_test.dart`，2026-11-16 晨 15）：s= 尺寸规范化、天卡头像预取清单收集去重、URL 缺失占位；pendingMeta 编解码往返+坏 JSON 容错、离线发布整条标 *（冲正清空）、干净条目加评论只标评论正文不标（冲正清空）、离线编辑标正文（冲正清空）；正文/评论渲染 `*` 精确标注。
 - **显示配置 4 项**（`test/core/session/display_cfg_test.dart`）：标签库增删（初始含默认三项）+ KV 重载（'[]' 空库语义）、调色板覆盖/恢复自动/非法色名忽略、心情增删改（默认仅改显示）+ KV 重载、cfgVersion 自增。MemoryLocalStore 注入 + debugLoadCfg 钩子；静态表 setUp/tearDown 复位防污染。
 - **光晕像素采样 2 项**（`test/features/glow_pixel_test.dart`；深色期望改为可见 Δ≥4 ≤48——用户覆盖原版 0.15）。
 - **live 集成 14 项**（`test/live/integration_live_test.dart`）：原 11 项回归（全程隐式验证 X-Diary-Pass）+ M3-12 动态口令 401 + M3-13 多设备共享 + M3-14 冒名拒绝。**2026-11-14 后端 v4 实测 14/14 全绿**（未启动自动 SKIP）。

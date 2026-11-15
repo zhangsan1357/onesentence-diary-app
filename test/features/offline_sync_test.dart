@@ -282,6 +282,69 @@ void main() {
     expect(payload.media.single.id, 900);
     expect(payload.media.single.cekB64, pm.single.cekWrappedB64);
   });
+
+  test('pendingMeta 编解码往返 + 坏 JSON 容错', () {
+    expect(encodePendingMeta(false, const []), '');
+    final m0 = parsePendingMeta('');
+    expect(m0.text, isFalse);
+    expect(m0.comments, isEmpty);
+    final m = parsePendingMeta(encodePendingMeta(true, [3, 4]));
+    expect(m.text, isTrue);
+    expect(m.comments, [3, 4]);
+    final g = parsePendingMeta('garbage');
+    expect(g.text, isFalse);
+    expect(g.comments, isEmpty);
+    final n = parsePendingMeta(null);
+    expect(n.text, isFalse);
+    expect(n.comments, isEmpty);
+  });
+
+  test('待同步标记：离线发布整条标 *，冲正后清空', () async {
+    await bootstrap();
+    await pubOffline();
+    var st = container.read(appSessionProvider);
+    expect(st.entries.single.textPending, isTrue);
+    expect(st.entries.single.pendingComments, isEmpty);
+    await session.syncNow();
+    st = container.read(appSessionProvider);
+    expect(st.entries.single.textPending, isFalse);
+  });
+
+  test('待同步标记：干净条目离线加评论只标评论（正文不标），冲正清空', () async {
+    await bootstrap();
+    await pubOffline();
+    await session.syncNow(); // 条目先上云、变干净
+    fake.online = false;
+    await session.addComment(
+        container.read(appSessionProvider).entries.single, '离线评论');
+    fake.online = true;
+    final st = container.read(appSessionProvider);
+    expect(st.entries.single.textPending, isFalse, reason: '正文没改过不标正文');
+    expect(st.entries.single.pendingComments, [0]);
+    await session.syncNow();
+    final st2 = container.read(appSessionProvider);
+    expect(st2.entries.single.pendingComments, isEmpty);
+    expect(fake.replaces.length, 1, reason: '整条重加密推替换');
+  });
+
+  test('待同步标记：离线编辑正文标正文（原有评论不标），冲正清空', () async {
+    await bootstrap();
+    await pubOffline();
+    await session.syncNow();
+    fake.online = false;
+    await session.updateEntry(
+        container.read(appSessionProvider).entries.single,
+        text: '改过的正文',
+        mood: null,
+        tags: []);
+    fake.online = true;
+    final st = container.read(appSessionProvider);
+    expect(st.entries.single.textPending, isTrue);
+    expect(st.entries.single.pendingComments, isEmpty);
+    await session.syncNow();
+    expect(
+        container.read(appSessionProvider).entries.single.textPending, isFalse);
+  });
 }
 
 /// FakeApi.replace 记录体（三字段分离）→ Envelope JSON（解密用）。

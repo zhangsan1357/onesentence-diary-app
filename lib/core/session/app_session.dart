@@ -494,6 +494,7 @@ class AppSession extends Notifier<AppState> {
       userId: name,
       locked: false,
       entries: [],
+      pendingCount: 0, // 旧身份队列已清
       clearSyncError: true,
       toast: '身份已登录 · 同步中',
     );
@@ -578,6 +579,7 @@ class AppSession extends Notifier<AppState> {
       needsPass: false,
       userId: '',
       entries: [],
+      pendingCount: 0,
       bioUnlock: false,
       clearSyncError: true,
       clearHighlight: true,
@@ -775,7 +777,8 @@ class AppSession extends Notifier<AppState> {
         .where((r) => r.syncState != 0)
         .toList()
       ..sort((a, b) => a.updatedAtMs.compareTo(b.updatedAtMs));
-    for (final r in rows) {
+    try {
+      for (final r in rows) {
       // 暂存媒体先上传 → 引用注入载荷 → 整条重加密（明文只在内存，P1-3 同款约束）
       var cipherJson = r.cipherJson ?? '';
       final pending = await _db!.pendingMediaFor(r.localId);
@@ -817,6 +820,7 @@ class AppSession extends Notifier<AppState> {
             cipherJson: cipherJson,
             updatedAtMs: r.updatedAtMs,
             syncState: 0,
+            pendingMeta: '', // 冲正成功 = 标记清空
           );
           break;
         case 2: // 待替换（编辑/评论）
@@ -834,6 +838,7 @@ class AppSession extends Notifier<AppState> {
             cipherJson: cipherJson,
             updatedAtMs: r.updatedAtMs,
             syncState: 0,
+            pendingMeta: '',
           );
           break;
         case 3: // 待删除
@@ -850,11 +855,14 @@ class AppSession extends Notifier<AppState> {
             updatedAtMs: r.updatedAtMs,
             deleted: true,
             syncState: 0,
+            pendingMeta: '',
           );
           break;
       }
       await _db!.deletePendingMediaFor(r.localId);
-      _set((s) => s.copyWith(pendingCount: s.pendingCount - 1));
+    }
+    } finally {
+      await _refreshMarks(); // 冲正成功/中断都要刷新标记与计数（中断=未冲正的保留）
     }
   }
 
@@ -961,6 +969,8 @@ class AppSession extends Notifier<AppState> {
         updatedAt: DateTime.fromMillisecondsSinceEpoch(r.updatedAtMs),
         deleted: r.deleted,
         avatarUrl: _avatars[r.localId],
+        textPending: parsePendingMeta(r.pendingMeta).text,
+        pendingComments: parsePendingMeta(r.pendingMeta).comments,
       ));
     }
     final pending = rows.where((r) => r.syncState != 0).length;
@@ -975,6 +985,7 @@ class AppSession extends Notifier<AppState> {
     required int updatedAtMs,
     bool deleted = false,
     int? syncState, // null = 不改动（保留现有状态）
+    String? pendingMeta, // null = 不改动；'' = 清空标记
   }) async {
     // 落盘零明文（P1-3）：payloadJson 列复用存密文 JSON（免 schema 迁移），
     // 解密只在读取（_loadLocalEntries）时发生。
@@ -988,7 +999,25 @@ class AppSession extends Notifier<AppState> {
       deleted: driftBool(deleted),
       syncState:
           syncState == null ? const Value.absent() : Value(syncState),
+      pendingMeta:
+          pendingMeta == null ? const Value.absent() : Value(pendingMeta),
     ));
+  }
+
+  /// 从库行刷新内存条目的待同步标记（* 前缀）与待同步计数——
+  /// 显示层标记的唯一事实源是库行 pendingMeta，内存条目一律由此重建，杜绝各处手工维护。
+  Future<void> _refreshMarks() async {
+    final store = _db;
+    if (store == null) return; // demo/无库：无标记
+    final rows = {for (final r in await store.allEntries()) r.localId: r};
+    final pending = rows.values.where((r) => r.syncState != 0).length;
+    _set((s) => s.copyWith(
+          entries: [
+            for (final e in s.entries)
+              e.copyWithMark(parsePendingMeta(rows[e.localId]?.pendingMeta)),
+          ],
+          pendingCount: pending,
+        ));
   }
 
   // ---------- 发布 / 编辑 / 删除 / 评论 ----------
@@ -1097,6 +1126,7 @@ class AppSession extends Notifier<AppState> {
         cipherJson: cipherJson,
         updatedAtMs: now.millisecondsSinceEpoch,
         syncState: 1,
+        pendingMeta: encodePendingMeta(true, const []), // 整条待上云 → 正文标 *
       );
       for (final m in pendingMedia) {
         await _db!.insertPendingMedia(m);
@@ -1104,9 +1134,9 @@ class AppSession extends Notifier<AppState> {
       state = state.copyWith(
         entries: [entry, ...state.entries],
         highlightDate: now,
-        pendingCount: state.pendingCount + 1,
         toast: '云端不可达 · 已本地保存，联网后手动刷新同步',
       );
+      await _refreshMarks(); // 标记与计数唯一写入口
       return;
     }
 
@@ -1150,12 +1180,15 @@ class AppSession extends Notifier<AppState> {
       comments: [...entry.payload.comments, comment],
     );
     final updated = entry.copyWith(payload: payload, updatedAt: now);
-    await _replacePayload(updated);
+    await _replacePayload(updated,
+        pendingMark:
+            (textEdited: false, newCommentIndex: entry.payload.comments.length));
     _replaceLocal(updated);
     state = state.copyWith(
       entries: state.entries.map((e) => e.localId == entry.localId ? updated : e).toList(),
       toast: '评论已加密保存',
     );
+    await _refreshMarks();
   }
 
   Future<void> deleteEntry(DiaryEntry entry) async {
@@ -1168,8 +1201,8 @@ class AppSession extends Notifier<AppState> {
       state = state.copyWith(
         entries:
             state.entries.where((e) => e.localId != entry.localId).toList(),
-        pendingCount: state.pendingCount - 1,
       );
+      await _refreshMarks();
       return;
     }
     if (!_demo && entry.serverId != null) {
@@ -1184,8 +1217,6 @@ class AppSession extends Notifier<AppState> {
         }
       } on DioException {
         // 云端不可达：本地标记删除 + 入队，联网后随手动刷新冲正（离线队列）
-        final wasDirty = (await _db!.allEntries())
-            .any((r) => r.localId == entry.localId && r.syncState != 0);
         await _upsertLocal(
           localId: entry.localId,
           serverId: entry.serverId,
@@ -1196,12 +1227,10 @@ class AppSession extends Notifier<AppState> {
           syncState: 3,
         );
         await _db!.deletePendingMediaFor(entry.localId); // 已删条目的暂存媒体不再上传
-        _set((s) => s.copyWith(
-              pendingCount: s.pendingCount + (wasDirty ? 0 : 1),
-              toast: '云端不可达 · 已本地保存，联网后手动刷新同步',
-            ));
+        _set((s) => s.copyWith(toast: '云端不可达 · 已本地保存，联网后手动刷新同步'));
         _replaceLocal(deleted);
         state = state.copyWith(entries: [...state.entries]);
+        await _refreshMarks();
         return;
       }
     }
@@ -1293,13 +1322,18 @@ class AppSession extends Notifier<AppState> {
       comments: entry.payload.comments,
     );
     final updated = entry.copyWith(payload: payload, updatedAt: now);
-    await _replacePayload(updated, pendingMedia: pendingMedia);
+    await _replacePayload(updated,
+        pendingMedia: pendingMedia,
+        pendingMark: (textEdited: true, newCommentIndex: null));
     _replaceLocal(updated);
     state = state.copyWith(toast: '已更新 · 重新加密 ✓');
+    await _refreshMarks();
   }
 
+  /// 待同步标记的本次增量：正文/心情/标签是否改动 + 离线新增评论下标（可选）。
   Future<void> _replacePayload(DiaryEntry entry,
-      {List<db.PendingMediaItem> pendingMedia = const []}) async {
+      {List<db.PendingMediaItem> pendingMedia = const [],
+      ({bool textEdited, int? newCommentIndex})? pendingMark}) async {
     if (_demo) return;
     final s = _session!;
     final cek = randomBytes(32);
@@ -1307,6 +1341,18 @@ class AppSession extends Notifier<AppState> {
       utf8.encode(entry.payload.encode()),
       s.publicKey,
       cek: cek,
+    );
+    // 旧标记合并基础（离线路径 merge；成功路径直接清）
+    final row = await _findRow(entry.localId);
+    final old = parsePendingMeta(row?.pendingMeta);
+    final wasDirty = row != null && row.syncState != 0;
+    final mergedMeta = encodePendingMeta(
+      old.text || (pendingMark?.textEdited ?? false),
+      [
+        ...old.comments,
+        if (pendingMark?.newCommentIndex != null)
+          pendingMark!.newCommentIndex!,
+      ],
     );
     if (entry.serverId == null) {
       // 离线新建、尚未上云的条目（syncState=1）：只更新本地，保持待新建标记。
@@ -1320,7 +1366,7 @@ class AppSession extends Notifier<AppState> {
         date: entry.date,
         cipherJson: cipherJson,
         updatedAtMs: entry.updatedAt.millisecondsSinceEpoch,
-        syncState: 1,
+        pendingMeta: mergedMeta,
       );
       return;
     }
@@ -1343,8 +1389,6 @@ class AppSession extends Notifier<AppState> {
       }
     } on DioException {
       // 云端不可达：本地保存为待替换，联网后随手动刷新冲正（离线队列 2026-11-16）
-      final wasDirty =
-          (await _db!.allEntries()).any((r) => r.localId == entry.localId && r.syncState != 0);
       await _db!.deletePendingMediaFor(entry.localId);
       for (final m in pendingMedia) {
         await _db!.insertPendingMedia(m);
@@ -1356,21 +1400,27 @@ class AppSession extends Notifier<AppState> {
         cipherJson: cipherJson,
         updatedAtMs: entry.updatedAt.millisecondsSinceEpoch,
         syncState: 2,
+        pendingMeta: mergedMeta,
       );
-      // 已在队列的条目（再次离线编辑）不重复计数
-      _set((s) => s.copyWith(
-            pendingCount: s.pendingCount + (wasDirty ? 0 : 1),
-            toast: '云端不可达 · 已本地保存，联网后手动刷新同步',
-          ));
       return;
     }
+    // 推云成功 = 该条全部改动（含此前离线暂存的）都已上云：清状态、清标记
     await _upsertLocal(
       localId: entry.localId,
       serverId: entry.serverId,
       date: entry.date,
       cipherJson: cipherJson,
       updatedAtMs: entry.updatedAt.millisecondsSinceEpoch,
+      syncState: 0,
+      pendingMeta: wasDirty ? '' : null,
     );
+  }
+
+  Future<db.Entry?> _findRow(String localId) async {
+    for (final r in await _db!.allEntries()) {
+      if (r.localId == localId) return r;
+    }
+    return null;
   }
 
   void _replaceLocal(DiaryEntry entry) {

@@ -352,6 +352,18 @@ class IosRow extends StatelessWidget {
 
 /// 页面大标题顶距（2026-11-16 真机反馈）：岛/刘海机取状态栏安全区+12，
 /// 无刘海环境（web 预览 0）保持原 64 设计值——四个 tab 页大标题统一使用。
+/// 待同步标记（晨 15 用户拍板 * 指针式）：显示层注入，绝不写入载荷——
+/// 编辑预填/搜索/导出全消费原始 payload，标记永不污染数据。
+/// 橙色与页头「N 条待同步」徽标同色，语义一致（橙星 = 这条还没上云）。
+List<InlineSpan> pendingMark(bool pending, Brightness b) => [
+      if (pending)
+        TextSpan(
+          text: '*',
+          style: TextStyle(
+              color: Tokens.orange(b), fontWeight: FontWeight.w800),
+        ),
+    ];
+
 double headerTopPad(BuildContext context) {
   final t = MediaQuery.paddingOf(context).top + 12;
   return max(t, 64);

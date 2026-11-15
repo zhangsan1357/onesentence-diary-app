@@ -13,6 +13,7 @@ import '../../core/model/diary_entry.dart';
 import '../../core/session/app_session.dart';
 import '../../features/theme/tokens.dart';
 import '../../widgets/animal_avatar.dart';
+import '../../widgets/common.dart' show pendingMark;
 
 /// 评论头像刷新盐（2026-11-16）：feed 页每次刷新重掷 → 全部评论动物换新
 /// （随机性语义与卡片颜色序列一致）。
@@ -62,7 +63,7 @@ class _CommentsViewState extends ConsumerState<CommentsView> {
               child: Text('还没有评论，写第一条',
                   style: TextStyle(fontSize: 12, color: Tokens.label3(b))),
             ),
-          for (final c in comments)
+          for (final (i, c) in comments.indexed)
             Padding(
               padding: const EdgeInsets.symmetric(vertical: 5),
               child: Row(
@@ -76,11 +77,20 @@ class _CommentsViewState extends ConsumerState<CommentsView> {
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         // 只显示头像+内容（2026-11-15 用户拍板去掉「我/她」署名）
-                        Text(c.text,
+                        // 待同步标记（* 指针，晨 15）：离线新增的评论按库行 meta 标注
+                        Text.rich(
+                          TextSpan(
                             style: TextStyle(
                                 fontSize: 13,
                                 height: 1.5,
-                                color: Tokens.label(b))),
+                                color: Tokens.label(b)),
+                            children: [
+                              ...pendingMark(
+                                  widget.entry.pendingComments.contains(i), b),
+                              TextSpan(text: c.text),
+                            ],
+                          ),
+                        ),
                         Text(_fmtTime(c),
                             style: TextStyle(
                                 fontSize: 10, color: Tokens.label3(b))),

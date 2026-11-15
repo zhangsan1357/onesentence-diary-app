@@ -18,6 +18,9 @@ class Entries extends Table {
   // 同步状态（离线队列，2026-11-16）：0=已同步 1=待新建 2=待替换 3=待删除。
   // 非 0 行是本地未上云的最终态，拉取同步必须跳过（防云端旧密文覆盖本地改动）。
   IntColumn get syncState => integer().withDefault(const Constant(0))();
+  // 待同步标记 meta（显示层 * 前缀，晨 15）：JSON {"t":true,"c":[3,4]}——
+  // t=正文/心情/标签有离线改动；c=离线新增评论下标（append-only）。冲正/推云成功即清空。
+  TextColumn get pendingMeta => text().withDefault(const Constant(''))();
 
   @override
   Set<Column> get primaryKey => {localId};
@@ -50,7 +53,7 @@ class AppDb extends _$AppDb {
   AppDb(super.e);
 
   @override
-  int get schemaVersion => 2;
+  int get schemaVersion => 3;
 
   @override
   MigrationStrategy get migration => MigrationStrategy(
@@ -59,6 +62,10 @@ class AppDb extends _$AppDb {
           if (from < 2) {
             await m.addColumn(entries, entries.syncState);
             await m.createTable(pendingMedia);
+          }
+          // v3（晨 15 待同步标记）：条目加 pendingMeta 列
+          if (from < 3) {
+            await m.addColumn(entries, entries.pendingMeta);
           }
         },
       );
@@ -177,6 +184,7 @@ class MemoryLocalStore implements LocalStore {
       updatedAtMs: c.updatedAtMs.value,
       deleted: c.deleted.present ? c.deleted.value : false,
       syncState: c.syncState.present ? c.syncState.value : 0,
+      pendingMeta: c.pendingMeta.present ? c.pendingMeta.value : '',
     );
   }
 

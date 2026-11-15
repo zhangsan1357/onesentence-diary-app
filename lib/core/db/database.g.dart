@@ -101,6 +101,18 @@ class $EntriesTable extends Entries with TableInfo<$EntriesTable, Entry> {
     requiredDuringInsert: false,
     defaultValue: const Constant(0),
   );
+  static const VerificationMeta _pendingMetaMeta = const VerificationMeta(
+    'pendingMeta',
+  );
+  @override
+  late final GeneratedColumn<String> pendingMeta = GeneratedColumn<String>(
+    'pending_meta',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: false,
+    defaultValue: const Constant(''),
+  );
   @override
   List<GeneratedColumn> get $columns => [
     localId,
@@ -111,6 +123,7 @@ class $EntriesTable extends Entries with TableInfo<$EntriesTable, Entry> {
     updatedAtMs,
     deleted,
     syncState,
+    pendingMeta,
   ];
   @override
   String get aliasedName => _alias ?? actualTableName;
@@ -186,6 +199,15 @@ class $EntriesTable extends Entries with TableInfo<$EntriesTable, Entry> {
         syncState.isAcceptableOrUnknown(data['sync_state']!, _syncStateMeta),
       );
     }
+    if (data.containsKey('pending_meta')) {
+      context.handle(
+        _pendingMetaMeta,
+        pendingMeta.isAcceptableOrUnknown(
+          data['pending_meta']!,
+          _pendingMetaMeta,
+        ),
+      );
+    }
     return context;
   }
 
@@ -227,6 +249,10 @@ class $EntriesTable extends Entries with TableInfo<$EntriesTable, Entry> {
         DriftSqlType.int,
         data['${effectivePrefix}sync_state'],
       )!,
+      pendingMeta: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}pending_meta'],
+      )!,
     );
   }
 
@@ -245,6 +271,7 @@ class Entry extends DataClass implements Insertable<Entry> {
   final int updatedAtMs;
   final bool deleted;
   final int syncState;
+  final String pendingMeta;
   const Entry({
     required this.localId,
     this.serverId,
@@ -254,6 +281,7 @@ class Entry extends DataClass implements Insertable<Entry> {
     required this.updatedAtMs,
     required this.deleted,
     required this.syncState,
+    required this.pendingMeta,
   });
   @override
   Map<String, Expression> toColumns(bool nullToAbsent) {
@@ -270,6 +298,7 @@ class Entry extends DataClass implements Insertable<Entry> {
     map['updated_at_ms'] = Variable<int>(updatedAtMs);
     map['deleted'] = Variable<bool>(deleted);
     map['sync_state'] = Variable<int>(syncState);
+    map['pending_meta'] = Variable<String>(pendingMeta);
     return map;
   }
 
@@ -287,6 +316,7 @@ class Entry extends DataClass implements Insertable<Entry> {
       updatedAtMs: Value(updatedAtMs),
       deleted: Value(deleted),
       syncState: Value(syncState),
+      pendingMeta: Value(pendingMeta),
     );
   }
 
@@ -304,6 +334,7 @@ class Entry extends DataClass implements Insertable<Entry> {
       updatedAtMs: serializer.fromJson<int>(json['updatedAtMs']),
       deleted: serializer.fromJson<bool>(json['deleted']),
       syncState: serializer.fromJson<int>(json['syncState']),
+      pendingMeta: serializer.fromJson<String>(json['pendingMeta']),
     );
   }
   @override
@@ -318,6 +349,7 @@ class Entry extends DataClass implements Insertable<Entry> {
       'updatedAtMs': serializer.toJson<int>(updatedAtMs),
       'deleted': serializer.toJson<bool>(deleted),
       'syncState': serializer.toJson<int>(syncState),
+      'pendingMeta': serializer.toJson<String>(pendingMeta),
     };
   }
 
@@ -330,6 +362,7 @@ class Entry extends DataClass implements Insertable<Entry> {
     int? updatedAtMs,
     bool? deleted,
     int? syncState,
+    String? pendingMeta,
   }) => Entry(
     localId: localId ?? this.localId,
     serverId: serverId.present ? serverId.value : this.serverId,
@@ -339,6 +372,7 @@ class Entry extends DataClass implements Insertable<Entry> {
     updatedAtMs: updatedAtMs ?? this.updatedAtMs,
     deleted: deleted ?? this.deleted,
     syncState: syncState ?? this.syncState,
+    pendingMeta: pendingMeta ?? this.pendingMeta,
   );
   Entry copyWithCompanion(EntriesCompanion data) {
     return Entry(
@@ -356,6 +390,9 @@ class Entry extends DataClass implements Insertable<Entry> {
           : this.updatedAtMs,
       deleted: data.deleted.present ? data.deleted.value : this.deleted,
       syncState: data.syncState.present ? data.syncState.value : this.syncState,
+      pendingMeta: data.pendingMeta.present
+          ? data.pendingMeta.value
+          : this.pendingMeta,
     );
   }
 
@@ -369,7 +406,8 @@ class Entry extends DataClass implements Insertable<Entry> {
           ..write('cipherJson: $cipherJson, ')
           ..write('updatedAtMs: $updatedAtMs, ')
           ..write('deleted: $deleted, ')
-          ..write('syncState: $syncState')
+          ..write('syncState: $syncState, ')
+          ..write('pendingMeta: $pendingMeta')
           ..write(')'))
         .toString();
   }
@@ -384,6 +422,7 @@ class Entry extends DataClass implements Insertable<Entry> {
     updatedAtMs,
     deleted,
     syncState,
+    pendingMeta,
   );
   @override
   bool operator ==(Object other) =>
@@ -396,7 +435,8 @@ class Entry extends DataClass implements Insertable<Entry> {
           other.cipherJson == this.cipherJson &&
           other.updatedAtMs == this.updatedAtMs &&
           other.deleted == this.deleted &&
-          other.syncState == this.syncState);
+          other.syncState == this.syncState &&
+          other.pendingMeta == this.pendingMeta);
 }
 
 class EntriesCompanion extends UpdateCompanion<Entry> {
@@ -408,6 +448,7 @@ class EntriesCompanion extends UpdateCompanion<Entry> {
   final Value<int> updatedAtMs;
   final Value<bool> deleted;
   final Value<int> syncState;
+  final Value<String> pendingMeta;
   final Value<int> rowid;
   const EntriesCompanion({
     this.localId = const Value.absent(),
@@ -418,6 +459,7 @@ class EntriesCompanion extends UpdateCompanion<Entry> {
     this.updatedAtMs = const Value.absent(),
     this.deleted = const Value.absent(),
     this.syncState = const Value.absent(),
+    this.pendingMeta = const Value.absent(),
     this.rowid = const Value.absent(),
   });
   EntriesCompanion.insert({
@@ -429,6 +471,7 @@ class EntriesCompanion extends UpdateCompanion<Entry> {
     required int updatedAtMs,
     this.deleted = const Value.absent(),
     this.syncState = const Value.absent(),
+    this.pendingMeta = const Value.absent(),
     this.rowid = const Value.absent(),
   }) : localId = Value(localId),
        entryDate = Value(entryDate),
@@ -443,6 +486,7 @@ class EntriesCompanion extends UpdateCompanion<Entry> {
     Expression<int>? updatedAtMs,
     Expression<bool>? deleted,
     Expression<int>? syncState,
+    Expression<String>? pendingMeta,
     Expression<int>? rowid,
   }) {
     return RawValuesInsertable({
@@ -454,6 +498,7 @@ class EntriesCompanion extends UpdateCompanion<Entry> {
       if (updatedAtMs != null) 'updated_at_ms': updatedAtMs,
       if (deleted != null) 'deleted': deleted,
       if (syncState != null) 'sync_state': syncState,
+      if (pendingMeta != null) 'pending_meta': pendingMeta,
       if (rowid != null) 'rowid': rowid,
     });
   }
@@ -467,6 +512,7 @@ class EntriesCompanion extends UpdateCompanion<Entry> {
     Value<int>? updatedAtMs,
     Value<bool>? deleted,
     Value<int>? syncState,
+    Value<String>? pendingMeta,
     Value<int>? rowid,
   }) {
     return EntriesCompanion(
@@ -478,6 +524,7 @@ class EntriesCompanion extends UpdateCompanion<Entry> {
       updatedAtMs: updatedAtMs ?? this.updatedAtMs,
       deleted: deleted ?? this.deleted,
       syncState: syncState ?? this.syncState,
+      pendingMeta: pendingMeta ?? this.pendingMeta,
       rowid: rowid ?? this.rowid,
     );
   }
@@ -509,6 +556,9 @@ class EntriesCompanion extends UpdateCompanion<Entry> {
     if (syncState.present) {
       map['sync_state'] = Variable<int>(syncState.value);
     }
+    if (pendingMeta.present) {
+      map['pending_meta'] = Variable<String>(pendingMeta.value);
+    }
     if (rowid.present) {
       map['rowid'] = Variable<int>(rowid.value);
     }
@@ -526,6 +576,7 @@ class EntriesCompanion extends UpdateCompanion<Entry> {
           ..write('updatedAtMs: $updatedAtMs, ')
           ..write('deleted: $deleted, ')
           ..write('syncState: $syncState, ')
+          ..write('pendingMeta: $pendingMeta, ')
           ..write('rowid: $rowid')
           ..write(')'))
         .toString();
@@ -1163,6 +1214,7 @@ typedef $$EntriesTableCreateCompanionBuilder =
       required int updatedAtMs,
       Value<bool> deleted,
       Value<int> syncState,
+      Value<String> pendingMeta,
       Value<int> rowid,
     });
 typedef $$EntriesTableUpdateCompanionBuilder =
@@ -1175,6 +1227,7 @@ typedef $$EntriesTableUpdateCompanionBuilder =
       Value<int> updatedAtMs,
       Value<bool> deleted,
       Value<int> syncState,
+      Value<String> pendingMeta,
       Value<int> rowid,
     });
 
@@ -1223,6 +1276,11 @@ class $$EntriesTableFilterComposer extends Composer<_$AppDb, $EntriesTable> {
 
   ColumnFilters<int> get syncState => $composableBuilder(
     column: $table.syncState,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get pendingMeta => $composableBuilder(
+    column: $table.pendingMeta,
     builder: (column) => ColumnFilters(column),
   );
 }
@@ -1274,6 +1332,11 @@ class $$EntriesTableOrderingComposer extends Composer<_$AppDb, $EntriesTable> {
     column: $table.syncState,
     builder: (column) => ColumnOrderings(column),
   );
+
+  ColumnOrderings<String> get pendingMeta => $composableBuilder(
+    column: $table.pendingMeta,
+    builder: (column) => ColumnOrderings(column),
+  );
 }
 
 class $$EntriesTableAnnotationComposer
@@ -1314,6 +1377,11 @@ class $$EntriesTableAnnotationComposer
 
   GeneratedColumn<int> get syncState =>
       $composableBuilder(column: $table.syncState, builder: (column) => column);
+
+  GeneratedColumn<String> get pendingMeta => $composableBuilder(
+    column: $table.pendingMeta,
+    builder: (column) => column,
+  );
 }
 
 class $$EntriesTableTableManager
@@ -1352,6 +1420,7 @@ class $$EntriesTableTableManager
                 Value<int> updatedAtMs = const Value.absent(),
                 Value<bool> deleted = const Value.absent(),
                 Value<int> syncState = const Value.absent(),
+                Value<String> pendingMeta = const Value.absent(),
                 Value<int> rowid = const Value.absent(),
               }) => EntriesCompanion(
                 localId: localId,
@@ -1362,6 +1431,7 @@ class $$EntriesTableTableManager
                 updatedAtMs: updatedAtMs,
                 deleted: deleted,
                 syncState: syncState,
+                pendingMeta: pendingMeta,
                 rowid: rowid,
               ),
           createCompanionCallback:
@@ -1374,6 +1444,7 @@ class $$EntriesTableTableManager
                 required int updatedAtMs,
                 Value<bool> deleted = const Value.absent(),
                 Value<int> syncState = const Value.absent(),
+                Value<String> pendingMeta = const Value.absent(),
                 Value<int> rowid = const Value.absent(),
               }) => EntriesCompanion.insert(
                 localId: localId,
@@ -1384,6 +1455,7 @@ class $$EntriesTableTableManager
                 updatedAtMs: updatedAtMs,
                 deleted: deleted,
                 syncState: syncState,
+                pendingMeta: pendingMeta,
                 rowid: rowid,
               ),
           withReferenceMapper: (p0) => p0

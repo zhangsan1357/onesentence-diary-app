@@ -106,6 +106,30 @@ class EntryPayload {
   }
 }
 
+/// 待同步标记 meta（库行 pendingMeta 列的 JSON，2026-11-16 晨 15）：
+/// {"t":true,"c":[3,4]} → (正文/心情/标签有离线改动, 离线新增评论下标)。
+/// 评论 append-only → 下标稳定；冲正成功即清空。坏 JSON 按无标记处理。
+({bool text, List<int> comments}) parsePendingMeta(String? s) {
+  if (s == null || s.isEmpty) return (text: false, comments: const []);
+  try {
+    final j = jsonDecode(s) as Map<String, dynamic>;
+    return (
+      text: j['t'] == true,
+      comments: (j['c'] as List?)?.map((e) => e as int).toList() ?? const [],
+    );
+  } catch (_) {
+    return (text: false, comments: const []);
+  }
+}
+
+String encodePendingMeta(bool text, List<int> comments) {
+  if (!text && comments.isEmpty) return '';
+  return jsonEncode({
+    if (text) 't': true,
+    if (comments.isNotEmpty) 'c': comments,
+  });
+}
+
 /// 日记条目（领域模型：明文字段 + 密文引用）。
 @immutable
 class DiaryEntry {
@@ -117,6 +141,9 @@ class DiaryEntry {
   final DateTime updatedAt;
   final bool deleted;
   final String? avatarUrl; // 后端 EntryVO.avatar 链接（客户端只消费不拼装；demo/评论用同款模板）
+  // 待同步标记（显示层 * 前缀的唯一依据，来自库行 pendingMeta；冲正/推云成功即清）
+  final bool textPending;
+  final List<int> pendingComments;
 
   const DiaryEntry({
     required this.localId,
@@ -127,6 +154,8 @@ class DiaryEntry {
     required this.updatedAt,
     this.deleted = false,
     this.avatarUrl,
+    this.textPending = false,
+    this.pendingComments = const [],
   });
 
   DiaryEntry copyWith({
@@ -138,6 +167,8 @@ class DiaryEntry {
     DateTime? updatedAt,
     bool? deleted,
     String? avatarUrl,
+    bool? textPending,
+    List<int>? pendingComments,
   }) =>
       DiaryEntry(
         localId: localId ?? this.localId,
@@ -148,6 +179,14 @@ class DiaryEntry {
         updatedAt: updatedAt ?? this.updatedAt,
         deleted: deleted ?? this.deleted,
         avatarUrl: avatarUrl ?? this.avatarUrl,
+        textPending: textPending ?? this.textPending,
+        pendingComments: pendingComments ?? this.pendingComments,
+      );
+
+  /// 从库行 pendingMeta 解析结果重建待同步标记（_refreshMarks 唯一写入口）。
+  DiaryEntry copyWithMark(({bool text, List<int> comments}) meta) => copyWith(
+        textPending: meta.text,
+        pendingComments: meta.comments,
       );
 }
 
