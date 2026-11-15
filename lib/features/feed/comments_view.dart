@@ -79,29 +79,12 @@ class _CommentsViewState extends ConsumerState<CommentsView> {
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        Text.rich(
-                          TextSpan(
-                            children: [
-                              TextSpan(
-                                text: c.who,
-                                style: TextStyle(
-                                  fontSize: 13,
-                                  fontWeight: FontWeight.w700,
-                                  color: Tokens.label(b),
-                                ),
-                              ),
-                              const WidgetSpan(child: SizedBox(width: 6)),
-                              TextSpan(
-                                text: c.text,
-                                style: TextStyle(
-                                  fontSize: 13,
-                                  height: 1.5,
-                                  color: Tokens.label(b),
-                                ),
-                              ),
-                            ],
-                          ),
-                        ),
+                        // 只显示头像+内容（2026-11-15 用户拍板去掉「我/她」署名）
+                        Text(c.text,
+                            style: TextStyle(
+                                fontSize: 13,
+                                height: 1.5,
+                                color: Tokens.label(b))),
                         Text(c.time,
                             style: TextStyle(
                                 fontSize: 10, color: Tokens.label3(b))),

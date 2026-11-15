@@ -741,12 +741,19 @@ class AppSession extends Notifier<AppState> {
         if (e.serverId != null) e.serverId!: e,
     };
     for (final se in result.list) {
+      final local = byServerId[se.id];
+      final localId = local?.localId ?? _newLocalId();
+      // 头像每次响应都不同：无变化的条目也要更新，否则存量条目永远拿不到头像
+      if (se.avatar != null &&
+          se.avatar!.isNotEmpty &&
+          (local != null || !se.deleted)) {
+        _avatars[localId] = se.avatar!;
+      }
       final cipherJson = jsonEncode({
         'ciphertext': se.ciphertext,
         'nonce_content': se.nonceContent,
         'encrypted_cek': se.encryptedCek,
       });
-      final local = byServerId[se.id];
       if (local != null &&
           local.cipherJson != null &&
           local.cipherJson == cipherJson) {
@@ -764,10 +771,6 @@ class AppSession extends Notifier<AppState> {
         payload = EntryPayload.decode(utf8.decode(bytes));
       } catch (_) {
         continue; // 无法解密（他设备密文），保留密文等后续
-      }
-      final localId = local?.localId ?? _newLocalId();
-      if (se.avatar != null && se.avatar!.isNotEmpty) {
-        _avatars[localId] = se.avatar!;
       }
       await _upsertLocal(
         localId: localId,
