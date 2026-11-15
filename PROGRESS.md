@@ -170,6 +170,13 @@
 3. **web 预览 CORS 实况（决定性实测，客户端不可修）**：cn.cravatar.com 的 `access-control-allow-origin` 头**随 CDN 缓存状态漂移**——早前命中缓存的 URL 浏览器 fetch ✓，新 hash/带 query 的回源响应 ✗（页面内三变体实证）；cravatar.cn 入口 301 首跳始终无 ACAO。**真机（iOS 无 CORS）不受影响，客户端已就绪**。预览侧两案待用户拍板：①Chrome CORS 解除扩展（零代码）；②tool/serve.js 加图片代理路由（前端工具链，web 分支 kIsWeb 走本地代理）。
 4. 测试：**82 项全绿** + analyze 零告警。
 
+## 2026-11-15（晨 8）头像每次刷新换新（用户拍板新鲜感）
+
+1. **推翻晨 7「首存不覆盖」缓存**：用户真机验收前拍板「刷新之后使用新的头像，有点新鲜感」——`_avatars` 回归**纯内存、每次同步覆盖更新**（后端现生成链接、每次不同），不持久化：重启/刷新后头像区短暂占位 → 同步完成即换新。
+2. **同步恒全量拉取**（纪元游标，替代增量游标）：重启后增量列表为空会拿不到任何头像，与「每次刷新换新」矛盾；全量后本地密文比对未变条目直接 continue，实际开销在传输+解密，个人日记量级可接受。`sync.cursor` 读写随之移除（logout 清理保留清残留）。
+3. 真机验收路径确认：iOS 无 CORS，后端 cravatar 链接直接可用；web 预览 CORS 限制仍在（晨 7 记录，两案待拍板：Chrome 扩展 / serve.js 代理）。
+4. 测试：**82 项全绿** + analyze 零告警。
+
 ## 测试清单（`flutter test` 82 项全绿；后端未启动时 live 14 项自动 SKIP）
 
 - **golden 向量 9 项**（`test/core/e2ee/golden_test.dart`，02 §7 固化向量）：Argon2id masterKey、X25519 公钥推导（clamp）、sharedSecret、HKDF encKey、92B EncryptedCEK 字节布局、AES-GCM cipher+tag 布局、完整 JSON fixture 解密、确定性加密复现完整 JSON、随机往返。**一次实现全绿**，Dart 端与 Go 参考实现逐字节互通。

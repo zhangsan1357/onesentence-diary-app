@@ -149,9 +149,9 @@ class AppSession extends Notifier<AppState> {
   UnlockedSession? _session;
   final _api = ApiClient();
   bool _demo = false;
-  // 后端头像链接（EntryVO.avatar）按 localId 挂内存+KV——客户端只消费不拼装。
-  // 首次存储后不再覆盖：后端现生成链接（每次请求可能不同），缓存保住
-  // 「每天一个头像」稳定（2026-11-15 用户拍板头像事实源在后端）。
+  // 后端头像链接（EntryVO.avatar）按 localId 挂内存——客户端只消费不拼装。
+  // 每次同步覆盖更新（后端现生成、每次不同）：用户拍板「刷新后新头像，有新鲜感」
+  //（2026-11-15），故不持久化——重启/刷新后占位，同步完成即换新。
   final _avatars = <String, String>{};
 
   /// 面容 ID 解锁桥（测试注入假实现）。
@@ -232,10 +232,6 @@ class AppSession extends Notifier<AppState> {
     }
     final kv = await _db!.kvAll();
     _loadCfg(kv); // 标签/心情显示配置（设备本地，覆盖静态表）
-    kv.forEach((k, v) {
-      // 头像缓存跨重启恢复（'avatar.<localId>'，见 _avatars 注释）
-      if (k.startsWith('avatar.')) _avatars[k.substring(7)] = v;
-    });
     final customBase = kv['api.base'];
     if (customBase != null && customBase.isNotEmpty) {
       _api.setBase(customBase);
@@ -539,9 +535,6 @@ class AppSession extends Notifier<AppState> {
       await db.kvRemove('api.token');
       await db.kvRemove('api.deviceId');
       await db.kvRemove('sync.cursor');
-      for (final localId in _avatars.keys.toList()) {
-        await db.kvRemove('avatar.$localId');
-      }
       _avatars.clear();
       await db.clearEntries();
     }
@@ -739,18 +732,10 @@ class AppSession extends Notifier<AppState> {
 
   Future<void> _syncOnce() async {
     final existing = await _db!.allEntries();
-    final saved = await _db!.kvGet('sync.cursor');
-    // 本地缓存为空（web 刷新后内存条目清空 / 新设备）：从纪元全量拉取重建，
-    // 否则增量游标会漏掉「游标之后无更新」的历史条目。
-    // 头像补挂：本地有非删除条目但缺头像缓存（存量数据同步在后端加 avatar
-    // 字段之前）→ 也从纪元全量拉一次，只为补挂头像（解密无变化条目直接
-    // continue，成本可忽略）；补齐后条件不再成立，恢复增量。
-    final baseCursor =
-        (existing.isEmpty ? null : saved) ?? '1970-01-01T00:00:00';
-    final needAvatarBackfill = existing
-        .any((e) => !e.deleted && e.serverId != null && _avatars[e.localId] == null);
-    final result = await _api.sync(
-        needAvatarBackfill ? '1970-01-01T00:00:00' : baseCursor);
+    // 每次全量拉取（纪元游标）：① 头像每轮刷新换新（用户拍板新鲜感）——增量
+    // 列表在重启后为空会拿不到任何头像；② 顺带重建条目索引。本地密文比对
+    // 未变的条目直接 continue，实际开销在传输与解密，个人日记量级可接受。
+    final result = await _api.sync('1970-01-01T00:00:00');
     final byServerId = {
       for (final e in existing)
         if (e.serverId != null) e.serverId!: e,
@@ -758,11 +743,10 @@ class AppSession extends Notifier<AppState> {
     for (final se in result.list) {
       final local = byServerId[se.id];
       final localId = local?.localId ?? _newLocalId();
-      // 后端头像链接：首存后不覆盖（缓存保「每天一个头像」稳定）
+      // 后端头像链接：每次同步覆盖（后端现生成、每次不同 → 刷新后有新鲜感）
       final av = se.avatar;
-      if (!se.deleted && av != null && av.isNotEmpty && _avatars[localId] == null) {
+      if (!se.deleted && av != null && av.isNotEmpty) {
         _avatars[localId] = av;
-        await _db!.kvSet('avatar.$localId', av);
       }
       final cipherJson = jsonEncode({
         'ciphertext': se.ciphertext,
@@ -797,7 +781,6 @@ class AppSession extends Notifier<AppState> {
         deleted: false,
       );
     }
-    await _db!.kvSet('sync.cursor', result.cursor);
     await _loadLocalEntries();
   }
 
@@ -999,7 +982,6 @@ class AppSession extends Notifier<AppState> {
         deleted: true,
       );
       _avatars.remove(entry.localId);
-      await _db!.kvRemove('avatar.${entry.localId}');
     }
     _replaceLocal(deleted);
     state = state.copyWith(entries: [...state.entries]);
