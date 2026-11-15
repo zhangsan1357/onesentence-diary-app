@@ -186,6 +186,13 @@
 5. 测试：**85 项全绿**（新增 3 条安全回归：落盘零明文+解密重建、needsPass 引导状态机、lock 清内存+解锁重建；`debugReloadEntries` 测试钩子）。analyze 零告警。
 6. 未做（评估中的 P2，待拍板）：剪贴板自动清空、token/keystore 迁 Keychain、TLS pinning、依赖 CVE 审计、导出明文提示。
 
+## 2026-11-16（晨 10）App 名字确认 + logo 换装管线就绪
+
+1. **名字**：桌面显示名早已生效——`Info.plist` `CFBundleDisplayName=一句话日记`；`CFBundleName=diary_app` 为内部标识不可见，不动。
+2. **logo 管线**（用户拍板「提供任意图片，转成符合要求的」）：新增 [tool/make_logo.dart](tool/make_logo.dart) + dev 依赖 `image: ^4.13.1`（纯 Dart，Windows 本地可跑）。用法 `dart run tool/make_logo.dart <任意图片> [输出目录]`：EXIF 摆正 → 调色板转真彩 → 透明图白底合成+白边居中补方（contain）/ 不透明居中裁方（cover）→ 重写 appiconset 全部 15 张（沿用现有文件名，Contents.json 不动），统一收敛 RGB 无透明（iOS 硬性要求）。
+3. **自测双路径通过**（合成图：600×400 不透明 → cover 裁方；400×600 透明 → contain 白底居中，bbox 上 255/下 256）：15 张全 color type 2。踩坑记录：①`Interpolation` 只有 nearest/linear/cubic；②`hasPalette` 看 `palette!=null`（RGB 调色板 numChannels 仍报 3，判真彩必须用 hasPalette）；③文件名正则 `\d+` 跨不过 `83.5` 的小数点（放宽 `[\d.]+`）。
+4. 等用户提供图片 → 跑管线出全套图标 → 看图验收 → 提交 → push 出 ipa。
+
 ## 测试清单（`flutter test` 85 项全绿；后端未启动时 live 14 项自动 SKIP）
 
 - **golden 向量 9 项**（`test/core/e2ee/golden_test.dart`，02 §7 固化向量）：Argon2id masterKey、X25519 公钥推导（clamp）、sharedSecret、HKDF encKey、92B EncryptedCEK 字节布局、AES-GCM cipher+tag 布局、完整 JSON fixture 解密、确定性加密复现完整 JSON、随机往返。**一次实现全绿**，Dart 端与 Go 参考实现逐字节互通。

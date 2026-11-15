@@ -60,6 +60,9 @@ dev_dependencies:
   drift_dev: ^2.35.3
   build_runner: ^2.15.1
 
+  # tool/make_logo.dart：任意图片 → iOS 全套 AppIcon（纯 Dart，本机/CI 均可跑）
+  image: ^4.5.0
+
 # For information on the generic Dart part of this file, see the
 # following page: https://dart.dev/tools/pub/pubspec
 
