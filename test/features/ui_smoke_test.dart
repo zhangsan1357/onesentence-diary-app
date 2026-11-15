@@ -108,6 +108,34 @@ void main() {
     expect(find.widgetWithText(TextField, '搜索关键词（正文 / 标签）'), findsNothing);
   });
 
+  testWidgets('长按日记 → 删除（二次确认 → 条目消失）', (tester) async {
+    await _pumpHome(tester);
+    await tester.longPress(find.text('21:14'), warnIfMissed: false);
+    await tester.pumpAndSettle(const Duration(milliseconds: 600));
+    expect(find.text('编辑'), findsOneWidget);
+    // 删除按钮在编辑页底部（滚动到折叠线下）
+    await tester.scrollUntilVisible(find.text('删除这条日记'), 120,
+        scrollable: find.byType(Scrollable).first);
+    await tester.tap(find.text('删除这条日记'), warnIfMissed: false);
+    await tester.pumpAndSettle();
+    // 二次确认弹窗：先取消不删（弹窗「取消」与顶栏「取消」重名 → 限定弹窗子树）
+    expect(find.text('删除这条日记'), findsNWidgets(2)); // 页内按钮 + 弹窗标题
+    await tester.tap(
+        find.descendant(
+            of: find.byType(AlertDialog), matching: find.text('取消')),
+        warnIfMissed: false);
+    await tester.pumpAndSettle();
+    // 再次删除并确认
+    await tester.tap(find.text('删除这条日记'), warnIfMissed: false);
+    await tester.pumpAndSettle();
+    await tester.tap(find.widgetWithText(TextButton, '删除'), warnIfMissed: false);
+    await tester.pumpAndSettle(const Duration(milliseconds: 600));
+    expect(find.textContaining('已删除'), findsOneWidget);
+    // 回时光流：21:14 那条不再出现
+    expect(find.text('21:14'), findsNothing);
+    await tester.pump(const Duration(seconds: 2));
+  });
+
   testWidgets('日历：翻月 + 休班徽章 + 统计', (tester) async {
     await _pumpHome(tester);
     await tester.tap(find.byIcon(Icons.calendar_month_outlined),

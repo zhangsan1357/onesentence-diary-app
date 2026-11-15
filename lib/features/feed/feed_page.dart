@@ -505,7 +505,7 @@ class DayCardBody extends ConsumerWidget {
           ),
         ),
         Padding(
-          padding: const EdgeInsets.fromLTRB(14, 2, 14, 8),
+          padding: const EdgeInsets.fromLTRB(14, 2, 14, 6),
           child: Column(
             children: [
               for (var i = 0; i < entries.length; i++)
@@ -589,7 +589,7 @@ class _EntryViewState extends ConsumerState<EntryView> {
       onLongPress: () =>
           Navigator.of(context).push(ComposeRoute(editEntry: widget.entry)),
       child: Padding(
-        padding: const EdgeInsets.symmetric(vertical: 9),
+        padding: const EdgeInsets.symmetric(vertical: 6),
         child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -605,7 +605,7 @@ class _EntryViewState extends ConsumerState<EntryView> {
             ),
           // post-actions（mockup .post-actions space-between）：标签/心情在左，评论按钮在右
           Padding(
-            padding: const EdgeInsets.only(top: 10),
+            padding: const EdgeInsets.only(top: 7),
             child: Row(
               children: [
                 Expanded(

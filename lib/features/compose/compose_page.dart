@@ -201,6 +201,40 @@ class _ComposePageState extends ConsumerState<ComposePage> {
     ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(msg)));
   }
 
+  /// 删除当前编辑的日记：二次确认 → 会话层软删+服务端同步删除 → 回时光流。
+  Future<void> _confirmDelete() async {
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('删除这条日记'),
+        content: const Text(
+          '删除后本机与服务端同步删除，不可恢复。',
+          style: TextStyle(fontSize: 13, height: 1.6),
+        ),
+        actions: [
+          TextButton(
+              onPressed: () => Navigator.pop(ctx, false),
+              child: const Text('取消')),
+          TextButton(
+            style: TextButton.styleFrom(
+                foregroundColor: const Color(0xFFFF453A)),
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('删除'),
+          ),
+        ],
+      ),
+    );
+    if (ok != true || !mounted) return;
+    try {
+      final notifier = ref.read(appSessionProvider.notifier);
+      await notifier.deleteEntry(widget.editEntry!);
+      notifier.showToast('已删除 ✓');
+      if (mounted) Navigator.of(context).pop();
+    } catch (e) {
+      if (mounted) _show('删除失败：$e');
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final b = Theme.of(context).brightness;
@@ -300,6 +334,37 @@ class _ComposePageState extends ConsumerState<ComposePage> {
                 ),
               ],
             ),
+            // 编辑态：删除这条日记（二次确认 → 本机+服务端同步删除）
+            if (_isEdit) ...[
+              const SizedBox(height: 24),
+              GestureDetector(
+                onTap: _confirmDelete,
+                child: Container(
+                  width: double.infinity,
+                  padding: const EdgeInsets.symmetric(vertical: 13),
+                  decoration: BoxDecoration(
+                    color: Tokens.red(b).withValues(
+                        alpha: b == Brightness.light ? .07 : .14),
+                    borderRadius: BorderRadius.circular(14),
+                    border: Border.all(
+                        color: Tokens.red(b).withValues(alpha: .25)),
+                  ),
+                  child: Row(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      Icon(Icons.delete_outline,
+                          size: 16, color: Tokens.red(b)),
+                      const SizedBox(width: 7),
+                      Text('删除这条日记',
+                          style: TextStyle(
+                              fontSize: 14,
+                              fontWeight: FontWeight.w600,
+                              color: Tokens.red(b))),
+                    ],
+                  ),
+                ),
+              ),
+            ],
           ],
         ),
       ),
