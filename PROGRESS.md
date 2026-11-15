@@ -163,6 +163,13 @@
 2. **天卡日数字与卡片同色**（用户拍板，覆盖 mockup「常态 label 仅高亮变色」语义）：accent = `glowAnchors[(glowIndex-1) % 8].$3` 常显；DayCardBody.highlighted 参数失去消费者一并删除（GlowDayCard 高亮保留）。上一轮的周末红/班橙日数字方案被本拍板替换。
 3. 浏览器实证：cravatar 头像加载成功 + 日数字「15」与该卡光晕同蓝。测试 **82 项全绿** + analyze 零告警 + web 构建通过。
 
+## 2026-11-15（晨 7）头像事实源收归后端 + 尺寸适配
+
+1. **用户拍板「客户端直接使用后端链接」**：条目头像 URL 事实源在后端（EntryVO.avatar），客户端只消费不拼装、不改 host（301 由网络栈自动跟随，iOS 完全正常）。实现：DiaryEntry.avatarUrl 恢复；app_session `_avatars` 缓存 **首存后不覆盖 + KV 持久化**（`avatar.<localId>`，init 从 kvAll 恢复）——后端现生成链接也能保住「每天一个头像」稳定；**增量同步头像补挂**：本地有非删除条目但缺头像缓存（存量数据同步早于后端加字段）→ 该次同步自动用纪元游标全量拉一次补挂，补齐后恢复增量；deleteEntry/logout 清理 avatar KV。
+2. **尺寸适配（用户给 s= 用法后）**：NetAvatar.sized 按显示尺寸规范化 `s=` 参数（天卡 40→120、评论 24→72，3x 屏 1:1；同 hash 不同 s 是同一张图的不同分辨率，图案不变），已有 s 覆盖、没有追加；圆形裁剪+cover。评论头像与 demo 数据（密文内、后端不可见）用 [avatar.dart](lib/core/util/avatar.dart) **与后端定稿格式一字不差**的模板本地拼（种子：评论=who|time|text、demo=localId）；后端改 URL 规则时客户端同步一处常量。
+3. **web 预览 CORS 实况（决定性实测，客户端不可修）**：cn.cravatar.com 的 `access-control-allow-origin` 头**随 CDN 缓存状态漂移**——早前命中缓存的 URL 浏览器 fetch ✓，新 hash/带 query 的回源响应 ✗（页面内三变体实证）；cravatar.cn 入口 301 首跳始终无 ACAO。**真机（iOS 无 CORS）不受影响，客户端已就绪**。预览侧两案待用户拍板：①Chrome CORS 解除扩展（零代码）；②tool/serve.js 加图片代理路由（前端工具链，web 分支 kIsWeb 走本地代理）。
+4. 测试：**82 项全绿** + analyze 零告警。
+
 ## 测试清单（`flutter test` 82 项全绿；后端未启动时 live 14 项自动 SKIP）
 
 - **golden 向量 9 项**（`test/core/e2ee/golden_test.dart`，02 §7 固化向量）：Argon2id masterKey、X25519 公钥推导（clamp）、sharedSecret、HKDF encKey、92B EncryptedCEK 字节布局、AES-GCM cipher+tag 布局、完整 JSON fixture 解密、确定性加密复现完整 JSON、随机往返。**一次实现全绿**，Dart 端与 Go 参考实现逐字节互通。

@@ -149,6 +149,10 @@ class AppSession extends Notifier<AppState> {
   UnlockedSession? _session;
   final _api = ApiClient();
   bool _demo = false;
+  // 后端头像链接（EntryVO.avatar）按 localId 挂内存+KV——客户端只消费不拼装。
+  // 首次存储后不再覆盖：后端现生成链接（每次请求可能不同），缓存保住
+  // 「每天一个头像」稳定（2026-11-15 用户拍板头像事实源在后端）。
+  final _avatars = <String, String>{};
 
   /// 面容 ID 解锁桥（测试注入假实现）。
   @visibleForTesting
@@ -228,6 +232,10 @@ class AppSession extends Notifier<AppState> {
     }
     final kv = await _db!.kvAll();
     _loadCfg(kv); // 标签/心情显示配置（设备本地，覆盖静态表）
+    kv.forEach((k, v) {
+      // 头像缓存跨重启恢复（'avatar.<localId>'，见 _avatars 注释）
+      if (k.startsWith('avatar.')) _avatars[k.substring(7)] = v;
+    });
     final customBase = kv['api.base'];
     if (customBase != null && customBase.isNotEmpty) {
       _api.setBase(customBase);
@@ -531,6 +539,10 @@ class AppSession extends Notifier<AppState> {
       await db.kvRemove('api.token');
       await db.kvRemove('api.deviceId');
       await db.kvRemove('sync.cursor');
+      for (final localId in _avatars.keys.toList()) {
+        await db.kvRemove('avatar.$localId');
+      }
+      _avatars.clear();
       await db.clearEntries();
     }
     if (!ref.mounted) return;
@@ -730,9 +742,15 @@ class AppSession extends Notifier<AppState> {
     final saved = await _db!.kvGet('sync.cursor');
     // 本地缓存为空（web 刷新后内存条目清空 / 新设备）：从纪元全量拉取重建，
     // 否则增量游标会漏掉「游标之后无更新」的历史条目。
-    final cursor =
+    // 头像补挂：本地有非删除条目但缺头像缓存（存量数据同步在后端加 avatar
+    // 字段之前）→ 也从纪元全量拉一次，只为补挂头像（解密无变化条目直接
+    // continue，成本可忽略）；补齐后条件不再成立，恢复增量。
+    final baseCursor =
         (existing.isEmpty ? null : saved) ?? '1970-01-01T00:00:00';
-    final result = await _api.sync(cursor);
+    final needAvatarBackfill = existing
+        .any((e) => !e.deleted && e.serverId != null && _avatars[e.localId] == null);
+    final result = await _api.sync(
+        needAvatarBackfill ? '1970-01-01T00:00:00' : baseCursor);
     final byServerId = {
       for (final e in existing)
         if (e.serverId != null) e.serverId!: e,
@@ -740,6 +758,12 @@ class AppSession extends Notifier<AppState> {
     for (final se in result.list) {
       final local = byServerId[se.id];
       final localId = local?.localId ?? _newLocalId();
+      // 后端头像链接：首存后不覆盖（缓存保「每天一个头像」稳定）
+      final av = se.avatar;
+      if (!se.deleted && av != null && av.isNotEmpty && _avatars[localId] == null) {
+        _avatars[localId] = av;
+        await _db!.kvSet('avatar.$localId', av);
+      }
       final cipherJson = jsonEncode({
         'ciphertext': se.ciphertext,
         'nonce_content': se.nonceContent,
@@ -788,6 +812,7 @@ class AppSession extends Notifier<AppState> {
               cipherJson: r.cipherJson,
               updatedAt: DateTime.fromMillisecondsSinceEpoch(r.updatedAtMs),
               deleted: r.deleted,
+              avatarUrl: _avatars[r.localId],
             ))
         .toList();
     _set((s) => s.copyWith(entries: entries));
@@ -973,6 +998,8 @@ class AppSession extends Notifier<AppState> {
         updatedAtMs: now.millisecondsSinceEpoch,
         deleted: true,
       );
+      _avatars.remove(entry.localId);
+      await _db!.kvRemove('avatar.${entry.localId}');
     }
     _replaceLocal(deleted);
     state = state.copyWith(entries: [...state.entries]);

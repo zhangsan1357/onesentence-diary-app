@@ -1,9 +1,10 @@
-// 头像 URL 助手：md5(seed) → https://cn.cravatar.com/avatar/<hex>.png
-// （沿用 linkBoy CravatarUtil → 后端 AvatarUtil 的同源做法，任意 MD5 hex 都有头像）。
-// 域名注意（2026-11-15 实测）：cravatar.cn 入口会 301 → cn.cravatar.com，而 301
-// 那一跳不带 CORS 头，Flutter web（CanvasKit 必须过 CORS）两轮灰掉；直连源站
-// cn.cravatar.com 200 + access-control-allow-origin:*，浏览器 fetch 实测通过。
-// iOS 无 CORS 概念，直连同样更快（省一次跳转）。
+// 头像 URL 助手：md5(seed) → 与后端定稿格式一字不差的头像链接。
+// 用途边界（2026-11-15 用户拍板：头像 URL 事实源在后端，条目头像直接消费
+// EntryVO.avatar，客户端不拼装）：本助手仅用于 demo 数据与评论头像——评论在
+// 端上密文内、后端不可见，只能客户端按评论身份（who|time|text）确定性拼装。
+// 后端调整 URL 规则时，同步改此一处模板。
+// 技术注记：cravatar.cn 入口 301 不带 CORS 头（web 预览灰掉的根因），模板直连
+// cn.cravatar.com（access-control-allow-origin:*，浏览器 fetch 实测通过）。
 import 'dart:convert';
 import 'dart:typed_data';
 

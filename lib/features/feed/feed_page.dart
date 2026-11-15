@@ -457,13 +457,13 @@ class DayCardBody extends ConsumerWidget {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        // 头部：头像左上（第三方随机头像，种子=日期 → 每天一个）+ 日右上；
+        // 头部：头像左上（后端链接，每天一条 → 每天一个）+ 日右上；
         // 年月收在日下（原「月 + 完整日期」两行重复，2026-11-15 用户去掉）
         Padding(
           padding: const EdgeInsets.fromLTRB(14, 13, 14, 4),
           child: Row(
             children: [
-              NetAvatar(seed: entries.first.date, size: 40),
+              NetAvatar(url: entries.first.avatarUrl, size: 40),
               const Spacer(),
               Column(
                 crossAxisAlignment: CrossAxisAlignment.end,
