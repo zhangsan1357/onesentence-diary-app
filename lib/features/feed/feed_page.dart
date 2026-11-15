@@ -15,7 +15,7 @@ import '../../features/compose/compose_page.dart';
 import '../../features/shell/home_shell.dart';
 import '../../features/theme/tokens.dart';
 import '../../widgets/common.dart';
-import '../../widgets/seed_avatar.dart';
+import '../../widgets/net_avatar.dart';
 import 'comments_view.dart';
 
 class FeedPage extends ConsumerStatefulWidget {
@@ -453,21 +453,28 @@ class DayCardBody extends ConsumerWidget {
             ? _Badge(b, 'off')
             : (hol.type == 'ban' ? _Badge(b, 'ban') : null));
 
-    // mockup：日期数字常态 label 色，仅高亮（日历跳转/新发布）按组变色
+    // 日数字变色：高亮（日历跳转/新发布）按组变色优先；否则与日历页呼应——
+    // 班橙 / 休与双休红 / 工作日 label（2026-11-15 用户反馈「日的变色掉了」）
+    final isWeekend =
+        d.weekday == DateTime.saturday || d.weekday == DateTime.sunday;
     final accent = highlighted
         ? Tokens.glowAnchors[(glowIndex - 1) % 8].$3
-        : Tokens.label(b);
+        : hol?.type == 'ban'
+            ? Tokens.orange(b)
+            : (hol?.type == 'off' || isWeekend)
+                ? Tokens.red(b)
+                : Tokens.label(b);
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        // 头部：头像左上（本地确定性生成，种子=日期 → 每天一个）+ 日右上；
+        // 头部：头像左上（第三方随机头像，种子=日期 → 每天一个）+ 日右上；
         // 年月收在日下（原「月 + 完整日期」两行重复，2026-11-15 用户去掉）
         Padding(
           padding: const EdgeInsets.fromLTRB(14, 13, 14, 4),
           child: Row(
             children: [
-              SeedAvatar(seed: entries.first.date, size: 40),
+              NetAvatar(seed: entries.first.date, size: 40),
               const Spacer(),
               Column(
                 crossAxisAlignment: CrossAxisAlignment.end,

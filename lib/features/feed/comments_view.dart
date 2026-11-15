@@ -1,14 +1,15 @@
 // 评论视图：懒加载展开后的列表 + 输入行（0 条显示空态文案）。
-// 每条评论配本地确定性头像（2026-11-15 用户拍板，替代 cravatar——网络头像在
-// web 预览/真机都渲染成灰色占位）：种子 = 评论身份（who|time|text），同一条
-// 评论稳定、各条互不相同。时间显示标准格式 yyyy-MM-dd HH:mm。
+// 每条评论配第三方随机头像（2026-11-15 用户拍板 DiceBear，替代 cravatar——
+// 其不带 CORS 头导致 web 预览两次灰掉）：种子 = 评论身份（who|time|text），
+// 同一条评论稳定、各条互不相同；失败回落中性人形（不显示文字）。
+// 时间显示标准格式 yyyy-MM-dd HH:mm。
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../core/model/diary_entry.dart';
 import '../../core/session/app_session.dart';
 import '../../features/theme/tokens.dart';
-import '../../widgets/seed_avatar.dart';
+import '../../widgets/net_avatar.dart';
 
 class CommentsView extends ConsumerStatefulWidget {
   final DiaryEntry entry;
@@ -59,7 +60,7 @@ class _CommentsViewState extends ConsumerState<CommentsView> {
               child: Row(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  SeedAvatar(seed: '${c.who}|${c.time}|${c.text}', size: 24),
+                  NetAvatar(seed: '${c.who}|${c.time}|${c.text}', size: 24),
                   const SizedBox(width: 8),
                   Expanded(
                     child: Column(

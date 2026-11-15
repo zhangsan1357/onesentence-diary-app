@@ -38,8 +38,7 @@ class AppDefaults {
   static String tagColorSeeded(String name, String seed) =>
       _hashColorName(name + seed);
 
-  /// 稳定哈希（JS 32 位溢出语义，非负）——标签色与本地头像等确定性着色共用。
-  static int stableHash(String s) {
+  static String _hashColorName(String s) {
     var h = 0;
     for (var i = 0; i < s.length; i++) {
       final cc = s.codeUnitAt(i);
@@ -47,10 +46,9 @@ class AppDefaults {
       h = _toInt32(cc) + _toInt32((_toInt32(h << 5)) - h);
       h = _toInt32(h);
     }
-    return h.isNegative ? _toInt32(-h) : h;
+    final abs = h.isNegative ? _toInt32(-h) : h;
+    return tagColorNames[abs % 8];
   }
-
-  static String _hashColorName(String s) => tagColorNames[stableHash(s) % 8];
 
   /// 用户调色板覆盖（标签管理设置，设备本地 KV，AppSession 加载/回写）：
   /// 标签名 → 8 色名；未覆盖的标签走稳定哈希。
