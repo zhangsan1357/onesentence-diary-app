@@ -133,7 +133,7 @@ class _FeedPageState extends ConsumerState<FeedPage> {
     // NetAvatar 占位兜底，不走 FlutterError.reportError（测试环境会判失败）。
     for (final u in dayAvatarUrls(groups)) {
       if (_precached.add(u)) {
-        unawaited(precacheImage(NetworkImage(NetAvatar.sized(u, 46)), context,
+        unawaited(precacheImage(NetworkImage(NetAvatar.sized(u, 56)), context,
             onError: (_, _) {}));
       }
     }
@@ -548,7 +548,8 @@ class DayCardBody extends ConsumerWidget {
           padding: const EdgeInsets.fromLTRB(14, 13, 14, 4),
           child: Row(
             children: [
-              NetAvatar(url: entries.first.avatarUrl, size: 46),
+              // 天卡头像 56（晨 17 真机反馈「再大点」；接口图像链路不变 §2.7 v3）
+              NetAvatar(url: entries.first.avatarUrl, size: 56),
               const Spacer(),
               Column(
                 crossAxisAlignment: CrossAxisAlignment.end,
@@ -658,6 +659,13 @@ class _EntryViewState extends ConsumerState<EntryView> {
 
   @override
   Widget build(BuildContext context) {
+    // 刷新后收起评论（晨 17 §4.4）：syncNow 成功自增 dataRev，rev 变化即收起；
+    // 失败路径（横幅）不增 rev → 评论不收。
+    ref.listen(appSessionProvider.select((s) => s.dataRev), (prev, next) {
+      if (prev != next && _commentsOpen && mounted) {
+        setState(() => _commentsOpen = false);
+      }
+    });
     final b = Theme.of(context).brightness;
     final e = widget.entry;
     final p = e.payload;

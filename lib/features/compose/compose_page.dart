@@ -1,6 +1,7 @@
 // 发布页：全屏弹层（上滑过场）——正文自动增高 + 心情 6 胶囊（可反选）+
 // 标签默认/云端 chips 点选（≤6）+ 文本补录新标签 + 照片（≤9）+ 录音 ≤60s + 发布。
 import 'dart:async';
+import 'dart:convert' show jsonDecode, jsonEncode;
 import 'dart:typed_data';
 
 import 'package:audio_waveforms/audio_waveforms.dart';
@@ -75,10 +76,48 @@ class _ComposePageState extends ConsumerState<ComposePage> {
       _mood = edit.payload.mood;
       _tags.addAll(edit.payload.tags);
     }
-    _text.addListener(() => setState(() {}));
+    _text.addListener(() {
+      setState(() {});
+      _saveDraft(); // 未落盘输入随时缓存（300ms 防抖，§4.12）
+    });
+    unawaited(_restoreDraft());
   }
 
   bool get _isEdit => widget.editEntry != null;
+
+  /// 草稿键（§4.12）：编辑按条目隔离，新建共用一条。
+  String get _draftKey =>
+      _isEdit ? 'edit.${widget.editEntry!.localId}' : 'new';
+
+  void _saveDraft() {
+    ref.read(appSessionProvider.notifier).saveDraft(
+        _draftKey,
+        jsonEncode(
+            {'text': _text.text, 'mood': _mood, 'tags': List.of(_tags)}));
+  }
+
+  /// 恢复草稿（上次未落盘的输入）：仅在用户尚未输入时应用，避免覆盖正在打的字。
+  Future<void> _restoreDraft() async {
+    final d = await ref.read(appSessionProvider.notifier).loadDraft(_draftKey);
+    if (d == null || !mounted) return;
+    final untouched = _text.text.isEmpty && _mood == null && _tags.isEmpty;
+    if (!untouched) return;
+    try {
+      final j = jsonDecode(d) as Map<String, dynamic>;
+      setState(() {
+        _text.text = j['text'] as String? ?? '';
+        _mood = j['mood'] as String?;
+        _tags
+          ..clear()
+          ..addAll([
+            for (final v in (j['tags'] as List?) ?? const [])
+              if (v is String) v,
+          ]);
+      });
+    } catch (_) {
+      // 坏草稿按无处理
+    }
+  }
 
   @override
   void dispose() {
@@ -189,6 +228,8 @@ class _ComposePageState extends ConsumerState<ComposePage> {
               media: media,
             );
       }
+      // 本地已落库（离线队列保证最终推云）→ 草稿使命完成（§4.12）
+      await ref.read(appSessionProvider.notifier).clearDraft(_draftKey);
       if (mounted) Navigator.of(context).pop();
     } catch (e) {
       _show(_isEdit ? '保存失败：$e' : '发布失败：$e');
@@ -238,7 +279,11 @@ class _ComposePageState extends ConsumerState<ComposePage> {
   @override
   Widget build(BuildContext context) {
     final b = Theme.of(context).brightness;
-    return Scaffold(
+    // 微信式键盘收起（§4.11）：点空白/正文区收起；按钮/chip/输入框等子控件
+    // 胜出手势竞技场，行为不受影响（不过敏——只拦空白点按）。
+    return GestureDetector(
+      onTap: () => FocusScope.of(context).unfocus(),
+      child: Scaffold(
       backgroundColor: Tokens.bg(b),
       body: SafeArea(
         bottom: false,
@@ -368,6 +413,7 @@ class _ComposePageState extends ConsumerState<ComposePage> {
           ],
         ),
       ),
+      ),
     );
   }
 
@@ -400,7 +446,10 @@ class _ComposePageState extends ConsumerState<ComposePage> {
   Widget _moodChip(Brightness b, MoodCfg m) {
     final sel = _mood == m.key;
     return GestureDetector(
-      onTap: () => setState(() => _mood = sel ? null : m.key),
+      onTap: () {
+        setState(() => _mood = sel ? null : m.key);
+        _saveDraft();
+      },
       child: Container(
         padding: const EdgeInsets.symmetric(horizontal: 13, vertical: 7),
         decoration: BoxDecoration(
@@ -460,6 +509,7 @@ class _ComposePageState extends ConsumerState<ComposePage> {
         } else {
           setState(() => _tags.add(t));
         }
+        _saveDraft();
       },
       child: Container(
         padding: const EdgeInsets.symmetric(horizontal: 11, vertical: 6),
@@ -496,7 +546,10 @@ class _ComposePageState extends ConsumerState<ComposePage> {
           for (var i = 0; i < _tags.length; i++)
             TagChip(_tags[i],
                 compact: true,
-                onDelete: () => setState(() => _tags.removeAt(i))),
+                onDelete: () {
+                  setState(() => _tags.removeAt(i));
+                  _saveDraft();
+                }),
           IntrinsicWidth(
             child: ConstrainedBox(
               constraints: const BoxConstraints(minWidth: 110),
@@ -522,6 +575,7 @@ class _ComposePageState extends ConsumerState<ComposePage> {
                     }
                   }
                   _tagIn.clear();
+                  _saveDraft();
                 },
               ),
             ),

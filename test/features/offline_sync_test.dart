@@ -143,6 +143,7 @@ void main() {
     store = db.MemoryLocalStore();
     await session.debugUseStore(store);
     session.debugUseApi(fake);
+    session.debugHoldFlush = true; // 挂起写路径的后台冲正：测试显式 flushNow/syncNow 保持确定性
     await session.createIdentity(RecoveryWords.generate(), '测试者');
     // createIdentity 内部 unawaited 的注册+空同步落地（全假实现，毫秒级）
     await Future<void>.delayed(const Duration(milliseconds: 50));
@@ -156,7 +157,7 @@ void main() {
     fake.online = true;
   }
 
-  test('发布断网 → 本地入队（syncState=1、待同步计数、提示语）', () async {
+  test('发布断网 → 本地先行入队（syncState=1、待同步计数），UI 即时返回', () async {
     await bootstrap();
     await pubOffline();
     final st = container.read(appSessionProvider);
@@ -164,8 +165,33 @@ void main() {
     expect(st.entries.first.serverId, isNull);
     expect(st.entries.first.payload.text, '离线一句');
     expect(st.pendingCount, 1);
-    expect(st.toast, contains('云端不可达'));
+    expect(st.toast, contains('已加密保存')); // 本地先行：落库即提示；离线告知由后台冲正失败补发
     expect((await store.allEntries()).single.syncState, 1);
+  });
+
+  test('离线发布 → 后台冲正失败 → toast 明示云端不可达（§2.3 本地先行补发）', () async {
+    await bootstrap();
+    session.debugHoldFlush = false; // 本项验证后台冲正路径本身
+    fake.online = false;
+    await session.publish(text: '离线一句', mood: null, tags: [], media: []);
+    await Future<void>.delayed(const Duration(milliseconds: 80));
+    expect(container.read(appSessionProvider).toast,
+        contains('云端不可达'));
+    expect((await store.allEntries()).single.syncState, 1, reason: '留队待续传');
+  });
+
+  test('在线发布本地先行 → 后台冲正回填 serverId、清队列与标记', () async {
+    await bootstrap();
+    session.debugHoldFlush = false;
+    await session.publish(text: '在线一句', mood: null, tags: [], media: []);
+    // 发布即时返回（不等网络）：内存里 serverId 尚未回填
+    expect(container.read(appSessionProvider).entries.single.serverId, isNull);
+    await Future<void>.delayed(const Duration(milliseconds: 80));
+    final st = container.read(appSessionProvider);
+    expect(st.entries.single.serverId, 101, reason: '后台冲正回填');
+    expect(st.pendingCount, 0);
+    expect(st.entries.single.textPending, isFalse);
+    expect((await store.allEntries()).single.syncState, 0);
   });
 
   test('手动刷新冲正新建：推云 + serverId 回填 + 队列清零；重复刷新不重放', () async {

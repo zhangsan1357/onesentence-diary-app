@@ -41,11 +41,13 @@ class MediaInput {
 }
 
 /// 标签/心情显示配置（设备本地 KV，注销账号一并清除）。
+/// cfg.tagDeleted = 本地删除名单（契约无标签删除端点，防拉取复活，§4.1）。
 const cfgKvKeys = [
   'cfg.tagColor',
   'cfg.tagPreset',
   'cfg.moodOver',
   'cfg.moodCustom',
+  'cfg.tagDeleted',
 ];
 
 class AppState {
@@ -71,6 +73,7 @@ class AppState {
   final bool bioUnlock; // 面容 ID 解锁（私钥存生物识别保护的钥匙串）
   final int cfgVersion; // 标签/心情显示配置版本（变更自增，驱动 UI 重建）
   final int pendingCount; // 离线队列长度（云端不可达时本地暂存的增删改条数）
+  final int dataRev; // 同步代次（syncNow 成功自增；驱动一次性 UI 动作如收起评论，晨 17）
 
   const AppState({
     this.ready = false,
@@ -95,6 +98,7 @@ class AppState {
     this.bioUnlock = false,
     this.cfgVersion = 0,
     this.pendingCount = 0,
+    this.dataRev = 0,
   });
 
   bool get unlocked => ready && !locked;
@@ -125,6 +129,7 @@ class AppState {
     bool? bioUnlock,
     int? cfgVersion,
     int? pendingCount,
+    int? dataRev,
   }) =>
       AppState(
         ready: ready ?? this.ready,
@@ -150,6 +155,7 @@ class AppState {
         bioUnlock: bioUnlock ?? this.bioUnlock,
         cfgVersion: cfgVersion ?? this.cfgVersion,
         pendingCount: pendingCount ?? this.pendingCount,
+        dataRev: dataRev ?? this.dataRev,
       );
 }
 
@@ -158,6 +164,7 @@ class AppSession extends Notifier<AppState> {
   UnlockedSession? _session;
   ApiClient _api = ApiClient();
   bool _demo = false;
+  bool _flushing = false; // 冲正在途标志（§2.4 并发保护：后台触发与手动刷新互斥）
   // 后端头像链接（EntryVO.avatar）按 localId 挂内存——客户端只消费不拼装。
   // 每次同步覆盖更新（后端现生成、每次不同）：用户拍板「刷新后新头像，有新鲜感」
   //（2026-11-15），故不持久化——重启/刷新后占位，同步完成即换新。
@@ -483,6 +490,7 @@ class AppSession extends Notifier<AppState> {
     await _persistKeystore(ks);
     await _db!.clearEntries(); // 旧身份的本地索引作废
     await _db!.clearPendingMedia(); // 旧身份的离线队列一并作废
+    await _db!.clearDrafts(); // 旧身份的输入草稿一并作废（§4.12）
     await _db!.kvRemove('sync.cursor');
     await _db!.kvRemove('api.token');
     state = state.copyWith(
@@ -561,6 +569,8 @@ class AppSession extends Notifier<AppState> {
       for (final k in cfgKvKeys) {
         await db.kvRemove(k);
       }
+      _deletedTags.clear();
+      await db.clearDrafts(); // 输入草稿随注销一并清除（§4.12）
       await db.kvRemove('ui.bio');
       await db.kvRemove('api.token');
       await db.kvRemove('api.deviceId');
@@ -745,17 +755,26 @@ class AppSession extends Notifier<AppState> {
     if (s == null || _db == null) return;
     try {
       // 先冲正离线队列（云端不可达时本地暂存的增删改），再全量拉取——
-      // 手动刷新（下拉/解锁/横幅重试）是唯一的冲正时机（2026-11-16 用户拍板：不加定时自动重试）。
-      await _flushDirty();
+      // 手动刷新（下拉/解锁/横幅重试）是遗留队列的续传时机（2026-11-16 用户拍板：
+      // 不加定时自动重试）；写路径本地先行后每次写还有一次后台冲正（§2.3）。
+      await flushNow();
       await _syncOnce();
-      _set((s) => s.copyWith(clearSyncError: true));
+      await _syncCfg(); // 标签/心情显示配置双写·拉（§4.1，内部吞错）
+      _set((s) => s.copyWith(
+            clearSyncError: true,
+            dataRev: s.dataRev + 1, // 同步代次：驱动一次性 UI 动作（收起评论，§4.4）
+          ));
     } on ApiException catch (e) {
       if (e.code == 401 && !e.message.contains('动态口令')) {
         // token 失效（换发 token 动态口令仍无法通过时不会走到这）→ 重注册再试
         await _register();
-        await _flushDirty();
+        await flushNow();
         await _syncOnce();
-        _set((s) => s.copyWith(clearSyncError: true));
+        await _syncCfg();
+        _set((s) => s.copyWith(
+              clearSyncError: true,
+              dataRev: s.dataRev + 1,
+            ));
       } else {
         // 动态口令类 401（时钟偏差 >5 分钟等）或其他业务错误 → 横幅提示 + 可重试
         _set((s) => s.copyWith(
@@ -862,7 +881,54 @@ class AppSession extends Notifier<AppState> {
       await _db!.deletePendingMediaFor(r.localId);
     }
     } finally {
-      await _refreshMarks(); // 冲正成功/中断都要刷新标记与计数（中断=未冲正的保留）
+      await _loadLocalEntries(); // 冲正成功/中断都重建内存（serverId/引用/标记/计数一并刷新）
+    }
+  }
+
+  /// 写路径本地先行的后台冲正触发（§2.3/§2.4）：每次写完调用一次，unawaited。
+  /// DioException → 留队 + toast（联网后手动刷新续传）；ApiException → 同步横幅。
+  /// 与手动刷新共用 _flushDirty，语义完全一致，区别只是不 await。
+  @visibleForTesting
+  bool debugHoldFlush = false; // 测试开关：挂起后台触发（确定性测试显式 flushNow）
+
+  void _kickFlush() {
+    if (debugHoldFlush) return;
+    if (_flushing) return; // 在途：遗留行由下次写/手动刷新续传（§2.4）
+    _flushing = true;
+    unawaited(_flushBg());
+  }
+
+  Future<void> _flushBg() async {
+    try {
+      await _flushDirty();
+    } on ApiException catch (e) {
+      _set((s) => s.copyWith(
+            syncError: e.message,
+            serverStatus: '同步失败：${e.message}',
+          ));
+    } on DioException {
+      _set((s) => s.copyWith(
+            toast: '云端不可达 · 已本地保存，联网后手动刷新同步',
+          ));
+    } catch (_) {
+      // 其余异常（如锁定态竞态）：留队静默
+    } finally {
+      _flushing = false;
+    }
+  }
+
+  /// 显式冲正（手动刷新/横幅重试/测试）：等待在途后台冲正后跑一轮。
+  Future<void> flushNow() async {
+    var guard = 0;
+    while (_flushing && guard < 200) {
+      await Future<void>.delayed(const Duration(milliseconds: 10));
+      guard++;
+    }
+    _flushing = true;
+    try {
+      await _flushDirty();
+    } finally {
+      _flushing = false;
     }
   }
 
@@ -882,6 +948,7 @@ class AppSession extends Notifier<AppState> {
       if (local != null && local.syncState != 0) continue;
       final localId = local?.localId ?? _newLocalId();
       // 后端头像链接：每次同步覆盖（后端现生成、每次不同 → 刷新后有新鲜感）
+      //（§2.7 v3：天卡必用接口图像；预下载池为后续增强，未实现前维持现链路）
       final av = se.avatar;
       if (!se.deleted && av != null && av.isNotEmpty) {
         _avatars[localId] = av;
@@ -1060,27 +1127,21 @@ class AppSession extends Notifier<AppState> {
 
     final s = _session;
     if (s == null) throw StateError('locked');
-    final localId = _newLocalId(); // 在媒体加密前生成：离线暂存媒体要与条目关联
+    final localId = _newLocalId(); // 在媒体加密前生成：暂存媒体要与条目关联
 
-    // 1) 媒体端上加密后上传（blob = nonce12 ‖ AES-GCM(cipher+tag)）；
-    //    云端不可达 → 媒体本地加密暂存，引用等冲正时注入（离线队列 2026-11-16）
-    final mediaRefs = <MediaRef>[];
+    // 1) 媒体端上加密暂存（本地先行 §2.3：发布路径不等网络，冲正时统一上传+注入引用）
     final pendingMedia = <db.PendingMediaItem>[];
     for (final m in media) {
-      try {
-        mediaRefs.add(await _encryptUploadMedia(m, s, localId));
-      } on DioException {
-        pendingMedia.add(await _encryptMediaLocal(m, s, localId));
-      }
+      pendingMedia.add(await _encryptMediaLocal(m, s, localId));
     }
 
-    // 2) 载荷加密（每条独立 CEK；未上传的媒体不入引用）
+    // 2) 载荷加密（每条独立 CEK；媒体引用等冲正时注入）
     final payload = EntryPayload(
       text: text.isEmpty ? '（一句没打完的话）' : text,
       time: time,
       mood: mood,
       tags: tags,
-      media: mediaRefs,
+      media: const [],
     );
     final cek = randomBytes(32);
     final cipherJson = await Envelope.encryptJson(
@@ -1088,79 +1149,34 @@ class AppSession extends Notifier<AppState> {
       s.publicKey,
       cek: cek,
     );
-    final parts = jsonDecode(cipherJson) as Map<String, dynamic>;
 
-    // 3) 上传密文（失败重注册一次；网络不可达 → 本地入队，联网后随手动刷新冲正）
-    int? serverId;
-    try {
-      serverId = await _api.createEntry(
-        entryDate: date,
-        ciphertext: parts['ciphertext'] as String,
-        nonceContent: parts['nonce_content'] as String,
-        encryptedCek: parts['encrypted_cek'] as String,
-      );
-    } on ApiException catch (e) {
-      if (e.code == 401) {
-        await _register();
-        serverId = await _api.createEntry(
-          entryDate: date,
-          ciphertext: parts['ciphertext'] as String,
-          nonceContent: parts['nonce_content'] as String,
-          encryptedCek: parts['encrypted_cek'] as String,
-        );
-      } else {
-        rethrow;
-      }
-    } on DioException {
-      final entry = DiaryEntry(
-        localId: localId,
-        serverId: null,
-        date: date,
-        payload: payload,
-        cipherJson: cipherJson,
-        updatedAt: now,
-      );
-      await _upsertLocal(
-        localId: localId,
-        date: date,
-        cipherJson: cipherJson,
-        updatedAtMs: now.millisecondsSinceEpoch,
-        syncState: 1,
-        pendingMeta: encodePendingMeta(true, const []), // 整条待上云 → 正文标 *
-      );
-      for (final m in pendingMedia) {
-        await _db!.insertPendingMedia(m);
-      }
-      state = state.copyWith(
-        entries: [entry, ...state.entries],
-        highlightDate: now,
-        toast: '云端不可达 · 已本地保存，联网后手动刷新同步',
-      );
-      await _refreshMarks(); // 标记与计数唯一写入口
-      return;
+    // 3) 本地先行落库（§2.3 统一路径）：在线/离线同型，UI 即时返回不等网络
+    for (final m in pendingMedia) {
+      await _db!.insertPendingMedia(m);
     }
-
-    // 4) 本地索引
+    await _upsertLocal(
+      localId: localId,
+      date: date,
+      cipherJson: cipherJson,
+      updatedAtMs: now.millisecondsSinceEpoch,
+      syncState: 1,
+      pendingMeta: encodePendingMeta(true, const []), // 整条待上云 → 正文标 *
+    );
     final entry = DiaryEntry(
       localId: localId,
-      serverId: serverId,
+      serverId: null, // 冲正成功后回填（serverId==null = 尚未推成）
       date: date,
       payload: payload,
       cipherJson: cipherJson,
       updatedAt: now,
-    );
-    await _upsertLocal(
-      localId: entry.localId,
-      serverId: serverId,
-      date: date,
-      cipherJson: cipherJson,
-      updatedAtMs: now.millisecondsSinceEpoch,
     );
     state = state.copyWith(
       entries: [entry, ...state.entries],
       highlightDate: now,
       toast: '已加密保存 · 每条独立密钥 ✓',
     );
+    await _refreshMarks(); // 标记与计数唯一写入口
+    _kickFlush(); // 后台冲正一次：上传媒体→注入引用→create→回填 serverId（§2.4）
   }
 
   /// 添加评论：载荷追加后整条重新加密替换（契约：编辑=整条替换）。
@@ -1180,7 +1196,7 @@ class AppSession extends Notifier<AppState> {
       comments: [...entry.payload.comments, comment],
     );
     final updated = entry.copyWith(payload: payload, updatedAt: now);
-    await _replacePayload(updated,
+    await _stageLocal(updated,
         pendingMark:
             (textEdited: false, newCommentIndex: entry.payload.comments.length));
     _replaceLocal(updated);
@@ -1189,13 +1205,14 @@ class AppSession extends Notifier<AppState> {
       toast: '评论已加密保存',
     );
     await _refreshMarks();
+    _kickFlush(); // 本地先行：推云交给后台冲正（§2.3）
   }
 
   Future<void> deleteEntry(DiaryEntry entry) async {
     final now = DateTime.now();
     final deleted = entry.copyWith(deleted: true, updatedAt: now);
     if (!_demo && entry.serverId == null) {
-      // 未上云的离线新建条目：无服务端可删 → 本地直接清除，队列计数一并回落
+      // 尚未推成（离线新建/本地先行窗口内）：无服务端可删 → 本地直接清除
       await _db!.deleteEntryHard(entry.localId);
       await _db!.deletePendingMediaFor(entry.localId);
       state = state.copyWith(
@@ -1206,33 +1223,23 @@ class AppSession extends Notifier<AppState> {
       return;
     }
     if (!_demo && entry.serverId != null) {
-      try {
-        await _api.deleteEntry(entry.serverId!);
-      } on ApiException catch (e) {
-        if (e.code == 401) {
-          await _register();
-          await _api.deleteEntry(entry.serverId!);
-        } else {
-          rethrow;
-        }
-      } on DioException {
-        // 云端不可达：本地标记删除 + 入队，联网后随手动刷新冲正（离线队列）
-        await _upsertLocal(
-          localId: entry.localId,
-          serverId: entry.serverId,
-          date: entry.date,
-          cipherJson: entry.cipherJson,
-          updatedAtMs: now.millisecondsSinceEpoch,
-          deleted: true,
-          syncState: 3,
-        );
-        await _db!.deletePendingMediaFor(entry.localId); // 已删条目的暂存媒体不再上传
-        _set((s) => s.copyWith(toast: '云端不可达 · 已本地保存，联网后手动刷新同步'));
-        _replaceLocal(deleted);
-        state = state.copyWith(entries: [...state.entries]);
-        await _refreshMarks();
-        return;
-      }
+      // 本地先行（§2.3）：标记删除（syncState=3）+ UI 即隐，推云交给后台冲正
+      //（404 视为已删成功）；云端不可达时条目保持隐藏、下次手动刷新续传。
+      await _upsertLocal(
+        localId: entry.localId,
+        serverId: entry.serverId,
+        date: entry.date,
+        cipherJson: entry.cipherJson,
+        updatedAtMs: now.millisecondsSinceEpoch,
+        deleted: true,
+        syncState: 3,
+      );
+      await _db!.deletePendingMediaFor(entry.localId); // 已删条目的暂存媒体不再上传
+      _replaceLocal(deleted);
+      state = state.copyWith(entries: [...state.entries]);
+      await _refreshMarks();
+      _kickFlush();
+      return;
     }
     if (_db != null) {
       await _upsertLocal(
@@ -1249,20 +1256,8 @@ class AppSession extends Notifier<AppState> {
     state = state.copyWith(entries: [...state.entries]);
   }
 
-  /// 单个媒体：随机 CEK 端上加密上传 + CEK ECIES 包裹进载荷引用。
-  Future<MediaRef> _encryptUploadMedia(
-      MediaInput m, UnlockedSession s, String localId) async {
-    final em = await _encryptMediaLocal(m, s, localId);
-    final up = await _api.uploadMedia(em.blob);
-    return MediaRef(
-      id: up.id,
-      kind: m.kind,
-      cekB64: em.cekWrappedB64,
-      sec: m.sec,
-    );
-  }
-
-  /// 单个媒体端上加密（不上传）：离线队列暂存用（落盘只有密文，P1-3 同款约束）。
+  /// 单个媒体端上加密（不上传）：暂存用（落盘只有密文，P1-3 同款约束）；
+  /// 上传在冲正时发生（_flushDirty）。
   Future<db.PendingMediaItem> _encryptMediaLocal(
       MediaInput m, UnlockedSession s, String localId) async {
     final mCek = randomBytes(32);
@@ -1305,12 +1300,9 @@ class AppSession extends Notifier<AppState> {
     } else {
       final s = _session;
       if (s == null) throw StateError('locked');
+      // 本地先行：新媒体端上加密暂存（不等上传），冲正时统一上传+注入引用
       for (final m in newMedia) {
-        try {
-          mediaRefs.add(await _encryptUploadMedia(m, s, entry.localId));
-        } on DioException {
-          pendingMedia.add(await _encryptMediaLocal(m, s, entry.localId));
-        }
+        pendingMedia.add(await _encryptMediaLocal(m, s, entry.localId));
       }
     }
     final payload = EntryPayload(
@@ -1322,16 +1314,19 @@ class AppSession extends Notifier<AppState> {
       comments: entry.payload.comments,
     );
     final updated = entry.copyWith(payload: payload, updatedAt: now);
-    await _replacePayload(updated,
+    await _stageLocal(updated,
         pendingMedia: pendingMedia,
         pendingMark: (textEdited: true, newCommentIndex: null));
     _replaceLocal(updated);
     state = state.copyWith(toast: '已更新 · 重新加密 ✓');
     await _refreshMarks();
+    _kickFlush(); // 本地先行：推云交给后台冲正（§2.3）
   }
 
-  /// 待同步标记的本次增量：正文/心情/标签是否改动 + 离线新增评论下标（可选）。
-  Future<void> _replacePayload(DiaryEntry entry,
+  /// 本地先行落库（§2.3 统一路径）：加密 → 暂存媒体重置 → 按 serverId 决定
+  /// syncState（null→1 待新建 / 非 null→2 待替换）+ 合并待同步标记。推云交给
+  /// 后台冲正（_kickFlush）或手动刷新（flushNow/syncNow），本方法绝不触网。
+  Future<void> _stageLocal(DiaryEntry entry,
       {List<db.PendingMediaItem> pendingMedia = const [],
       ({bool textEdited, int? newCommentIndex})? pendingMark}) async {
     if (_demo) return;
@@ -1342,10 +1337,9 @@ class AppSession extends Notifier<AppState> {
       s.publicKey,
       cek: cek,
     );
-    // 旧标记合并基础（离线路径 merge；成功路径直接清）
+    // 旧标记合并基础（离线窗口内多次修改 → 标记并集）
     final row = await _findRow(entry.localId);
     final old = parsePendingMeta(row?.pendingMeta);
-    final wasDirty = row != null && row.syncState != 0;
     final mergedMeta = encodePendingMeta(
       old.text || (pendingMark?.textEdited ?? false),
       [
@@ -1354,65 +1348,19 @@ class AppSession extends Notifier<AppState> {
           pendingMark!.newCommentIndex!,
       ],
     );
-    if (entry.serverId == null) {
-      // 离线新建、尚未上云的条目（syncState=1）：只更新本地，保持待新建标记。
-      // 暂存媒体按本次编辑重置（冲正时载荷重建引用，避免重复上传）。
-      await _db!.deletePendingMediaFor(entry.localId);
-      for (final m in pendingMedia) {
-        await _db!.insertPendingMedia(m);
-      }
-      await _upsertLocal(
-        localId: entry.localId,
-        date: entry.date,
-        cipherJson: cipherJson,
-        updatedAtMs: entry.updatedAt.millisecondsSinceEpoch,
-        pendingMeta: mergedMeta,
-      );
-      return;
+    // 暂存媒体按本次编辑重置（冲正时载荷重建引用，避免重复上传）
+    await _db!.deletePendingMediaFor(entry.localId);
+    for (final m in pendingMedia) {
+      await _db!.insertPendingMedia(m);
     }
-    final parts = jsonDecode(cipherJson) as Map<String, dynamic>;
-    Future<int> fn() => _api.replaceEntry(
-          id: entry.serverId!,
-          entryDate: entry.date,
-          ciphertext: parts['ciphertext'] as String,
-          nonceContent: parts['nonce_content'] as String,
-          encryptedCek: parts['encrypted_cek'] as String,
-        );
-    try {
-      await fn();
-    } on ApiException catch (e) {
-      if (e.code == 401) {
-        await _register();
-        await fn();
-      } else {
-        rethrow;
-      }
-    } on DioException {
-      // 云端不可达：本地保存为待替换，联网后随手动刷新冲正（离线队列 2026-11-16）
-      await _db!.deletePendingMediaFor(entry.localId);
-      for (final m in pendingMedia) {
-        await _db!.insertPendingMedia(m);
-      }
-      await _upsertLocal(
-        localId: entry.localId,
-        serverId: entry.serverId,
-        date: entry.date,
-        cipherJson: cipherJson,
-        updatedAtMs: entry.updatedAt.millisecondsSinceEpoch,
-        syncState: 2,
-        pendingMeta: mergedMeta,
-      );
-      return;
-    }
-    // 推云成功 = 该条全部改动（含此前离线暂存的）都已上云：清状态、清标记
     await _upsertLocal(
       localId: entry.localId,
       serverId: entry.serverId,
       date: entry.date,
       cipherJson: cipherJson,
       updatedAtMs: entry.updatedAt.millisecondsSinceEpoch,
-      syncState: 0,
-      pendingMeta: wasDirty ? '' : null,
+      syncState: entry.serverId == null ? 1 : 2,
+      pendingMeta: mergedMeta,
     );
   }
 
@@ -1541,6 +1489,12 @@ class AppSession extends Notifier<AppState> {
     } catch (_) {
       AppDefaults.customMoods = const [];
     }
+    _deletedTags
+      ..clear()
+      ..addAll([
+        for (final v in jList(kv['cfg.tagDeleted']))
+          if (v is String) v,
+      ]);
   }
 
   /// 测试钩子：按 init 同款逻辑从注入存储恢复显示配置。
@@ -1589,6 +1543,7 @@ class AppSession extends Notifier<AppState> {
         ? (Map.of(AppDefaults.tagColorOverrides)..remove(tag))
         : (Map.of(AppDefaults.tagColorOverrides)..[tag] = colorName);
     await _persistCfg();
+    _pushTag(tag); // 双写·推（§4.1：色名推当前生效色，自动哈希色物化为显式色）
   }
 
   /// 标签管理：新增预设标签（出现在撰写页建议里；1~16 字）。
@@ -1599,13 +1554,22 @@ class AppSession extends Notifier<AppState> {
     }
     AppDefaults.tagPresets = {...AppDefaults.tagPresets, t}.toList()..sort();
     await _persistCfg();
+    _pushTag(t);
   }
 
   /// 标签管理：移除预设标签（不影响已写入日记的标签）。
+  /// 契约无删除端点（缺口 #8）→ 本地删除名单防拉取复活，服务端行保持原样。
   Future<void> removeTagPreset(String tag) async {
     AppDefaults.tagPresets = AppDefaults.tagPresets
         .where((t) => t != tag)
         .toList(growable: false);
+    AppDefaults.tagColorOverrides =
+        (Map.of(AppDefaults.tagColorOverrides)..remove(tag));
+    _deletedTags.add(tag);
+    final db = _db;
+    if (db != null) {
+      await db.kvSet('cfg.tagDeleted', jsonEncode(_deletedTags.toList()));
+    }
     await _persistCfg();
   }
 
@@ -1656,6 +1620,101 @@ class AppSession extends Notifier<AppState> {
         .where((m) => m.key != key)
         .toList(growable: false);
     await _persistCfg();
+  }
+
+  // ---------- 标签/心情双写与输入草稿（晨 17 §4.1/§4.12） ----------
+
+  /// 本地删除名单（契约无标签删除端点，防拉取复活；KV cfg.tagDeleted）。
+  final _deletedTags = <String>{};
+
+  /// 双写·推（§4.1）：标签增/改色后 saveTag（同 device 同名=更新，幂等）。
+  /// 色推「当前生效色」= 覆盖优先，无覆盖时哈希自动色物化为显式色。
+  /// 失败静默留本地——下次变更或刷新再推，不加定时重试（与冲正拍板一致）。
+  void _pushTag(String tag) {
+    final color =
+        AppDefaults.tagColorOverrides[tag] ?? AppDefaults.tagColorName(tag);
+    unawaited(_api.saveTag(name: tag, color: color).catchError((_) => 0));
+  }
+
+  /// 双写·拉（§4.1）：syncNow 挂载。补缺合并——服务器独有的预设/色并入本地
+  ///（同名本地优先：契约无时间戳，无法判新旧）；删除名单过滤防复活；
+  /// 心情种子仅填充本地没有的 key（并入自定义列表使其可用）。失败静默。
+  Future<void> _syncCfg() async {
+    try {
+      final tags = await _api.configTags();
+      final presets = <String>{...AppDefaults.tagPresets};
+      final colors = Map<String, String>.of(AppDefaults.tagColorOverrides);
+      var changed = false;
+      for (final t in tags) {
+        if (_deletedTags.contains(t.name) || presets.contains(t.name)) continue;
+        presets.add(t.name);
+        if (t.color.isNotEmpty) colors[t.name] = t.color; // 色随预设一并补缺
+        changed = true;
+      }
+      if (changed) {
+        AppDefaults.tagPresets = presets.toList()..sort();
+        AppDefaults.tagColorOverrides = colors;
+        await _persistCfg();
+      }
+      final moods = await _api.configMoods();
+      final known = {
+        for (final m in AppDefaults.moods) m.key,
+        for (final m in AppDefaults.customMoods) m.key,
+      };
+      final add = <MoodCfg>[];
+      for (final m in moods) {
+        if (known.contains(m.moodKey)) continue;
+        add.add(MoodCfg(
+          key: m.moodKey,
+          emoji: m.emoji,
+          name: m.emoji.isEmpty ? '心情' : m.moodKey,
+          colorHex: AppDefaults.tagColorHex[m.color] ?? 0xFF8E8E93,
+        ));
+      }
+      if (add.isNotEmpty) {
+        AppDefaults.customMoods = [...AppDefaults.customMoods, ...add];
+        await _persistCfg();
+      }
+    } catch (_) {
+      // 网络不可达/业务错误：配置留在本地，下次手动刷新再拉（§4.1）
+    }
+  }
+
+  // ---------- 输入草稿（§4.12） ----------
+
+  Timer? _draftTimer;
+  final _draftPending = <String, String>{};
+
+  /// 保存草稿（值由调用方定义：compose 为 JSON，评论为纯文本）。300ms 防抖合并写。
+  void saveDraft(String key, String value) {
+    if (_db == null) return;
+    _draftPending[key] = value;
+    _draftTimer ??= Timer(const Duration(milliseconds: 300), _flushDrafts);
+  }
+
+  Future<void> _flushDrafts() async {
+    _draftTimer = null;
+    final pending = Map<String, String>.of(_draftPending);
+    _draftPending.clear();
+    final db = _db;
+    if (db == null) return;
+    for (final e in pending.entries) {
+      await db.kvSet('draft.${e.key}', e.value);
+    }
+  }
+
+  /// 读取草稿：先落防抖中未写盘的（避免读到旧值）。
+  Future<String?> loadDraft(String key) async {
+    await _flushDrafts();
+    return _db?.kvGet('draft.$key');
+  }
+
+  /// 清除草稿（输入已落库/用户放弃）。
+  Future<void> clearDraft(String key) async {
+    _draftPending.remove(key);
+    _draftTimer?.cancel();
+    _draftTimer = null;
+    await _db?.kvRemove('draft.$key');
   }
 
   void highlight(DateTime date) {

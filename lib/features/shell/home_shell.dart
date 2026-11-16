@@ -46,7 +46,12 @@ class _HomeShellState extends ConsumerState<HomeShell> {
 
     return Scaffold(
       backgroundColor: Tokens.bg(b),
-      body: Stack(
+      // 微信式键盘收起（晨 17 §4.11）：点空白收起——子控件（按钮/chip/输入框/卡片
+      // 内可点元素）胜出手势竞技场不受影响，只拦「空白处点按」，不过敏；
+      // 滚动/拖拽不触发 tap，同样不收。
+      body: GestureDetector(
+      onTap: () => FocusScope.of(context).unfocus(),
+      child: Stack(
         children: [
           // 内容页
           Positioned.fill(
@@ -82,6 +87,7 @@ class _HomeShellState extends ConsumerState<HomeShell> {
               switchTab: _switchTab,
             )),
         ],
+      ),
       ),
     );
   }

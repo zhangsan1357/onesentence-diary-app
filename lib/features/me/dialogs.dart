@@ -269,6 +269,7 @@ Future<void> showLoginIdentityDialog(
             TextField(
               controller: nameCtrl,
               autofocus: true,
+              textInputAction: TextInputAction.next, // 多字段弹窗键盘动作微调（§4.7）
               decoration: const InputDecoration(labelText: '注册名'),
             ),
             const SizedBox(height: 8),
@@ -276,6 +277,7 @@ Future<void> showLoginIdentityDialog(
               controller: secretCtrl,
               minLines: 2,
               maxLines: 4,
+              textInputAction: TextInputAction.next,
               decoration: const InputDecoration(
                 labelText: '恢复词（12 词）或派生密钥',
                 hintText: '粘贴同一份 12 个恢复词，或 64 位派生密钥',
@@ -287,6 +289,7 @@ Future<void> showLoginIdentityDialog(
                 controller: passCtrl,
                 obscureText: true,
                 keyboardType: TextInputType.number,
+                textInputAction: TextInputAction.done,
                 decoration: const InputDecoration(labelText: '本机口令（≥6 位）'),
               ),
             ],

@@ -239,7 +239,20 @@
 2. **AGENTS.md 新增「设计先行」**：任何改变 = 先提交设计文档的改变再改代码（顺序①文档②代码③analyze+测试④PROGRESS；偏差时回改文档，不允许代码先行）；测试映射表随设计一并更新。
 3. 无代码改动（本提交纯文档 + 流程）；测试维持 111 项全绿。
 
-## 测试清单（`flutter test` 111 项全绿；后端未启动时 live 14 项自动 SKIP）
+## 2026-11-16（晨 17）13 项真机反馈批次：写路径本地先行 + 键盘/草稿/排序/双写（设计先行全程）
+
+**设计先行两提交**：`63a4012`（13 项设计定稿 §2 修订 + §4 全表）→ `8a79b11`（用户重申**天卡必用接口图像**：废止天卡动物脸池早稿；§2.7 v3 = 预下载池基本设计——1w 张实测 ≈42MB、后台静默 3 并发/20 张小批/2~5s 抖动/Wi-Fi 断点续传/随机调用+缺失回退接口链路，**只设计不实现**）。
+
+1. **写路径本地先行（§2 v2，真机反馈「离线发帖/评论明显卡顿」）**：publish/updateEntry/addComment/deleteEntry 统一为「加密→本地落库（syncState 1/2/3）→UI 即时返回→`_kickFlush` 后台冲正一次」——在线/离线同型，UI 永不等网络。`_replacePayload`（内联推云）退役 → `_stageLocal`（纯落库）；媒体一律先加密暂存、引用冲正时注入；`_flushDirty` finally 改 `_loadLocalEntries` 全量重建内存（serverId/引用/标记一并刷）；并发保护 `_flushing` + `debugHoldFlush` 测试开关；后台冲正 DioException→toast「云端不可达」、ApiException→同步横幅（不回滚不丢数据）。`flushNow()` 显式入口（syncNow/测试）。
+2. **排序修复（§4.2）**：根因=组内顺序吃库行插入序（同步重建后新条目落卡底）。`groupByDay` 组内按 `payload.time` 倒序（同时间按 updatedAt 倒序）——与库序/插序解耦，任何重建路径确定性最新在最上。
+3. **标签/心情双写（§4.1，契约内）**：推=`addTagPreset/setTagColor` 后 saveTag（**覆盖优先生效色**，无覆盖时哈希自动色物化；`tagColorName` 不查覆盖表是踩坑一次）；拉=syncNow 挂载 `_syncCfg` 补缺合并（同名本地优先，契约无时间戳）；删除名单 `cfg.tagDeleted` 防拉取复活（缺口 #8：无标签删除端点/无心情写入端点）；心情种子仅填充本地没有的 key。
+4. **键盘（§4.4/4.6/4.8/4.11）**：AppState 加 `dataRev`（syncNow 成功自增）→ EntryView ref.listen 收起已展开评论；评论发送即 `unfocus`（本地先行后发送即时）；评论区根部长按吸收（`GestureDetector(onLongPress(){}, opaque)`）治「长按评论误触条目编辑」；HomeShell/compose 包裹「点空白收键盘」（子控件胜出竞技场不过敏，滚动不收）；登录弹窗三字段 textInputAction next/next/done。
+5. **草稿缓存（§4.12）**：会话层 `saveDraft/loadDraft/clearDraft`（KV `draft.*`，300ms 防抖合并写；loadDraft 先落防抖值防旧读）；compose 新建/编辑（正文+心情+标签 JSON，未输入才应用防覆盖）、评论按条目（纯文本）；本地落库成功即清（离线队列保证最终推云）；注销/换身份 `clearDrafts()`（LocalStore 新方法，drift `k LIKE 'draft.%'`）。
+6. **头像尺寸（§4.9/4.10）**：天卡 46→56（预取 s 同步改 56×3）；评论 32→24（原版 d776648 尺寸）。接口图像链路（EntryVO.avatar + 方案 D 预取）原样保留。
+7. 测试 **126 项全绿**（新增 15：offline 2——后台冲正失败 toast/在线发布后台回填 serverId；draft_config 6——推生效色/拉补缺+同名本地优先/删除名单防复活/心情补缺/草稿往返防抖/注销清草稿；payload 2——组内时间倒序/同时间按更新倒序；keyboard 交互 5——长按评论不误触编辑/发送收键盘+草稿清除/评论草稿恢复/dataRev 收评论/点空白收键盘+compose 草稿恢复）。analyze 零告警。
+8. **踩坑**：①testWidgets 是 FakeAsync 区——`Future.delayed` 永不推进（挂死 300s），必须 `tester.pump` 推假时钟；②`createIdentity→unawaited(_loadHolidays)` 的资产加载 `.timeout(2s)` Timer 在收尾被判 pending——bootstrap 后 pump 3s 放掉；③unfocus 断言不能是 `primaryFocus == null`（回落根 scope），用 EditableText 的 focusNode.hasFocus 翻转；④`tagColorName()` 只哈希不查覆盖表，推双写生效色要 `tagColorOverrides[tag] ?? tagColorName(tag)`。
+
+## 测试清单（`flutter test` 126 项全绿；后端未启动时 live 14 项自动 SKIP）
 
 - **golden 向量 9 项**（`test/core/e2ee/golden_test.dart`，02 §7 固化向量）：Argon2id masterKey、X25519 公钥推导（clamp）、sharedSecret、HKDF encKey、92B EncryptedCEK 字节布局、AES-GCM cipher+tag 布局、完整 JSON fixture 解密、确定性加密复现完整 JSON、随机往返。**一次实现全绿**，Dart 端与 Go 参考实现逐字节互通。
 - **恢复词 7 项**（`test/core/session/recovery_words_test.dart`）：BIP39 黄金向量（熵全 0 短语+seed，Node 互证）、生成多轮校验、抄写错误四类拒绝（换词/缺词/词表外/错序）、空白归一化、hex 判定、**diaryPass 动态口令向量（活后端实测）+窗口边界**。
@@ -253,6 +266,10 @@
 - **离线队列 7 项**（`test/features/offline_sync_test.dart`，2026-11-16 晨 14）：发布断网本地入队（syncState=1+计数+提示）、手动刷新冲正新建+幂等不重放、评论断网待替换（syncState=2 → 冲正推替换且评论在密文内）、删除已同步条目断网待删除（syncState=3 → 冲正推删除）、离线新建再删本地直除、冲正中途断网已推清队未推保留（下次刷新续传）、带图发布断网媒体加密暂存 → 冲正上传注入引用。FakeApi 注入（debugUseApi，online 开关模拟断网/恢复，DioException=断网信号）。
 - **头像预取/淡入 3 项 + 待同步标记 6 项**（`test/features/net_avatar_test.dart`、`offline_sync_test.dart` 标记 4 项、`pending_mark_test.dart`，2026-11-16 晨 15）：s= 尺寸规范化、天卡头像预取清单收集去重、URL 缺失占位；pendingMeta 编解码往返+坏 JSON 容错、离线发布整条标 *（冲正清空）、干净条目加评论只标评论正文不标（冲正清空）、离线编辑标正文（冲正清空）；正文/评论渲染 `*` 精确标注。
 - **显示配置 4 项**（`test/core/session/display_cfg_test.dart`）：标签库增删（初始含默认三项）+ KV 重载（'[]' 空库语义）、调色板覆盖/恢复自动/非法色名忽略、心情增删改（默认仅改显示）+ KV 重载、cfgVersion 自增。MemoryLocalStore 注入 + debugLoadCfg 钩子；静态表 setUp/tearDown 复位防污染。
+- **本地先行/后台冲正 2 项**（`test/features/offline_sync_test.dart` 增补，2026-11-16 晨 17）：离线发布→后台冲正失败 toast「云端不可达」留队；在线发布本地先行→后台冲正回填 serverId+清队列标记（发布即时返回不等网络）。`debugHoldFlush` 挂起后台触发保确定性。
+- **双写/草稿 6 项**（`test/features/draft_config_test.dart`，2026-11-16 晨 17）：saveTag 推覆盖优先生效色（同名=更新）；拉取补缺合并+同名本地优先；删除名单防拉取复活；心情种子仅补本地没有的 key；草稿保存/读取往返（loadDraft 先落防抖值）+ 清除；注销清草稿与删除名单。CfgFakeApi 补 config 三端点桩。
+- **组内排序 2 项**（`test/core/model/payload_test.dart` 增补，2026-11-16 晨 17）：乱序输入组内 time 倒序确定性输出；同时间按 updatedAt 倒序。
+- **键盘/评论交互 5 项**（`test/features/keyboard_interactions_test.dart`，2026-11-16 晨 17）：长按评论不误触条目编辑（手势吸收）；评论发送后 focusNode 失焦+输入清空+草稿清除；评论草稿恢复预填；dataRev 自增收起已展开评论（失败路径不收）；compose 草稿恢复+点空白收键盘。FakeAsync 踩坑：pump 推假时钟 + pump 3s 放掉 holidays timeout Timer（见晨 17 §8）。
 - **光晕像素采样 2 项**（`test/features/glow_pixel_test.dart`；深色期望改为可见 Δ≥4 ≤48——用户覆盖原版 0.15）。
 - **live 集成 14 项**（`test/live/integration_live_test.dart`）：原 11 项回归（全程隐式验证 X-Diary-Pass）+ M3-12 动态口令 401 + M3-13 多设备共享 + M3-14 冒名拒绝。**2026-11-14 后端 v4 实测 14/14 全绿**（未启动自动 SKIP）。
 
@@ -273,7 +290,9 @@
 5. **音频播放**：03 §6 只覆盖录音+波形，未指定播放库；feed 录音条目前为展示，P2 需要时引入播放库。
 6. **标签/心情配置为设备本地（2026-11-14 夜 3）**：02 §4.2 提到 tag_config 服务端种子（device 0），但 §5 契约无配置读写端点。现实现存本机 KV（cfg.*），标签库/调色板/自定义心情**不随多设备同步**；若需多设备共享配置，提请会话 A 在 §5 增补端点后再切服务端存储。
 7. **暗色光晕系数（2026-11-14 夜 3 用户拍板）**：原版 body.dark ×0.15（近不可见）被用户「暗色模式也需要渐变」明确覆盖为 0.40/0.55；如后续要回原版表现，改 `Tokens.glowBaseOpacity/glowHotOpacity` 一处即可。
-6. **注册名不可变更**：文案①「终身使用」——客户端无改名入口；如需改名需后端先定义语义（同名异钥已被拒绝，改名=数据空间迁移，涉及服务端）。
+8. **注册名不可变更**：文案①「终身使用」——客户端无改名入口；如需改名需后端先定义语义（同名异钥已被拒绝，改名=数据空间迁移，涉及服务端）。
+9. **身份变更能力（晨 17 §4.3，提请拍板，DESIGN §4.3 有草案）**：①改注册名=服务端重键数据空间，需后端 rename 端点；②换 12 词主密钥=新 userKey，被「同 userId 必须同 userKey」校验拒绝，需后端放行或 rotate 端点（客户端协议：全量拉取解密→重加密逐条 replace 幂等→keystore 重包→re-register，媒体 blob 无需重传）。二者本轮**客户端零改动**。
+10. **标签/心情双写受契约限制（晨 17 §4.1）**：POST /config/tags 仅增改（同名=更新）**无删除端点**；/config/moods **GET-only 6 种子**；且 tag 配置按 device 键控，跨设备同步契约本就不承诺。端上已按契约能力双写（推增改/拉补缺/删除名单防复活）；若需真删除与跨设备共享，提请会话 A 扩展端点。
 
 ## 实现约定（指回手册）
 

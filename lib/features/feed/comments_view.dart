@@ -4,10 +4,13 @@
 // 刷新盐 + 评论身份（who|time|text）——同一刷新周期内同一条评论稳定，
 // 每次刷新（下拉/横幅重试/重启）盐重掷 → 全部评论换新动物。时间显示
 // 标准格式 yyyy-MM-dd HH:mm。
+// 晨 17：头像调回原版 24（d776648）；发送后键盘收起（§4.6）；未发送输入
+// 走会话层草稿缓存（§4.12）；长按评论区不再误触条目编辑（§4.8 手势吸收）。
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 // StateProvider 在 Riverpod 3 收进 legacy（一个可变 int 的最简载体）
 import 'package:flutter_riverpod/legacy.dart' show StateProvider;
+import 'dart:async' show unawaited;
 
 import '../../core/model/diary_entry.dart';
 import '../../core/session/app_session.dart';
@@ -30,6 +33,24 @@ class CommentsView extends ConsumerStatefulWidget {
 
 class _CommentsViewState extends ConsumerState<CommentsView> {
   final _input = TextEditingController();
+
+  /// 草稿键：按条目隔离（§4.12），addComment 本地落库成功即清。
+  String get _draftKey => 'cmt.${widget.entry.localId}';
+
+  @override
+  void initState() {
+    super.initState();
+    unawaited(_restoreDraft());
+  }
+
+  Future<void> _restoreDraft() async {
+    final d = await ref
+        .read(appSessionProvider.notifier)
+        .loadDraft(_draftKey);
+    if (d != null && d.isNotEmpty && mounted && _input.text.isEmpty) {
+      setState(() => _input.text = d);
+    }
+  }
 
   @override
   void dispose() {
@@ -54,7 +75,12 @@ class _CommentsViewState extends ConsumerState<CommentsView> {
           ),
         ),
       ),
-      child: Column(
+      // 长按吸收（§4.8）：内层识别器胜出手势竞技场 → 不再冒泡到 EntryView
+      // 的长按编辑；后续评论长按菜单在此扩展点落地。
+      child: GestureDetector(
+        onLongPress: () {},
+        behavior: HitTestBehavior.opaque,
+        child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           if (comments.isEmpty)
@@ -70,7 +96,7 @@ class _CommentsViewState extends ConsumerState<CommentsView> {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   AnimalAvatar(
-                      seed: '$salt|${c.who}|${c.time}|${c.text}', size: 32),
+                      seed: '$salt|${c.who}|${c.time}|${c.text}', size: 24),
                   const SizedBox(width: 8),
                   Expanded(
                     child: Column(
@@ -106,6 +132,9 @@ class _CommentsViewState extends ConsumerState<CommentsView> {
                 child: TextField(
                   controller: _input,
                   style: TextStyle(fontSize: 13, color: Tokens.label(b)),
+                  onChanged: (v) => ref
+                      .read(appSessionProvider.notifier)
+                      .saveDraft(_draftKey, v),
                   decoration: InputDecoration(
                     hintText: '写评论…',
                     hintStyle: TextStyle(color: Tokens.label3(b)),
@@ -142,6 +171,7 @@ class _CommentsViewState extends ConsumerState<CommentsView> {
             ],
           ),
         ],
+        ),
       ),
     );
   }
@@ -154,10 +184,14 @@ class _CommentsViewState extends ConsumerState<CommentsView> {
   Future<void> _send() async {
     final v = _input.text.trim();
     if (v.isEmpty) return;
-    _input.clear();
+    // 发送后键盘收起（§4.6）：提交即 unfocus（本地先行后发送即时返回）
+    FocusScope.of(context).unfocus();
     try {
       await ref.read(appSessionProvider.notifier).addComment(widget.entry, v);
+      await ref.read(appSessionProvider.notifier).clearDraft(_draftKey);
+      _input.clear();
     } catch (err) {
+      // 失败：输入保留（草稿仍在），可重试
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(content: Text('评论发送失败：$err')),

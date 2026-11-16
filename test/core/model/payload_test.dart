@@ -72,4 +72,35 @@ void main() {
     expect(groups[1].key, '2026-11-12');
     expect(groups[1].value.length, 2);
   });
+
+  test('组内排序：时间倒序（与库行序/插序解耦，晨 17 §4.2）', () {
+    DiaryEntry e(String id, String time) => DiaryEntry(
+          localId: id,
+          serverId: null,
+          date: '2026-11-13',
+          payload: _p(time: time),
+          cipherJson: null,
+          updatedAt: DateTime(2026, 11, 13),
+        );
+    // 输入乱序（模拟同步后按库行序重建）→ 组内确定性输出最新在最上
+    final groups = groupByDay([e('a', '09:15'), e('b', '22:30'), e('c', '12:00')]);
+    expect(groups.single.value.map((x) => x.localId).toList(),
+        ['b', 'c', 'a']);
+  });
+
+  test('组内排序：同时间按更新时间倒序', () {
+    DiaryEntry e(String id, DateTime updated) => DiaryEntry(
+          localId: id,
+          serverId: null,
+          date: '2026-11-13',
+          payload: _p(time: '10:00'),
+          cipherJson: null,
+          updatedAt: updated,
+        );
+    final groups = groupByDay([
+      e('old', DateTime(2026, 11, 13, 10)),
+      e('new', DateTime(2026, 11, 13, 11)),
+    ]);
+    expect(groups.single.value.map((x) => x.localId).toList(), ['new', 'old']);
+  });
 }

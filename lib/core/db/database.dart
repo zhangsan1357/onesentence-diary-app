@@ -109,6 +109,10 @@ class AppDb extends _$AppDb {
   Future<void> kvRemove(String k) =>
       (delete(kv)..where((t) => t.k.equals(k))).go();
 
+  /// 草稿整组清除（draft.% 前缀；换身份/注销时调用，§4.12）
+  Future<void> clearDrafts() =>
+      (delete(kv)..where((t) => t.k.like('draft.%'))).go();
+
   Future<void> clearEntries() => delete(entries).go();
 }
 
@@ -135,6 +139,7 @@ abstract class LocalStore {
   Future<String?> kvGet(String key);
   Future<void> kvSet(String key, String value);
   Future<void> kvRemove(String key);
+  Future<void> clearDrafts();
   Future<void> clearEntries();
   Future<List<Entry>> allEntries();
   Future<void> upsertEntry(EntriesCompanion entry);
@@ -163,6 +168,10 @@ class MemoryLocalStore implements LocalStore {
 
   @override
   Future<void> kvRemove(String key) async => _kv.remove(key);
+
+  @override
+  Future<void> clearDrafts() async =>
+      _kv.removeWhere((k, _) => k.startsWith('draft.'));
 
   @override
   Future<void> clearEntries() async => _entries.clear();
@@ -220,6 +229,9 @@ class DriftLocalStore implements LocalStore {
 
   @override
   Future<void> kvRemove(String k) => _db.kvRemove(k);
+
+  @override
+  Future<void> clearDrafts() => _db.clearDrafts();
 
   @override
   Future<void> clearEntries() => _db.clearEntries();

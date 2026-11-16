@@ -190,7 +190,9 @@ class DiaryEntry {
       );
 }
 
-/// 天分组：按日期聚合、倒序排列（feed 渲染单位）。
+/// 天分组：按日期聚合、天序倒序；组内按条目时间倒序（HH:mm 字典序即时间序），
+/// 同时间按更新时间倒序（晨 17 §4.2）——组内顺序与库行序/内存插序解耦，任何
+/// 重建路径（发布即现/同步全量重建）结果一致：最新在最上。
 List<MapEntry<String, List<DiaryEntry>>> groupByDay(List<DiaryEntry> entries) {
   final map = <String, List<DiaryEntry>>{};
   for (final e in entries) {
@@ -198,5 +200,15 @@ List<MapEntry<String, List<DiaryEntry>>> groupByDay(List<DiaryEntry> entries) {
     map.putIfAbsent(e.date, () => []).add(e);
   }
   final keys = map.keys.toList()..sort((a, b) => b.compareTo(a));
-  return [for (final k in keys) MapEntry(k, map[k]!)];
+  return [
+    for (final k in keys)
+      MapEntry(
+          k,
+          map[k]!
+            ..sort((a, b) {
+              final byTime = b.payload.time.compareTo(a.payload.time);
+              if (byTime != 0) return byTime;
+              return b.updatedAt.compareTo(a.updatedAt);
+            })),
+  ];
 }
