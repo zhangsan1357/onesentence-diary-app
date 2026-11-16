@@ -42,13 +42,15 @@ class MediaInput {
 }
 
 /// 标签/心情显示配置（设备本地 KV，注销账号一并清除）。
-/// cfg.tagDeleted = 本地删除名单（契约无标签删除端点，防拉取复活，§4.1）。
+/// cfg.tagDeleted / cfg.moodDeleted = 本地删除名单（契约无删除端点，防拉取
+/// 复活，§4.1/§5.9）。
 const cfgKvKeys = [
   'cfg.tagColor',
   'cfg.tagPreset',
   'cfg.moodOver',
   'cfg.moodCustom',
   'cfg.tagDeleted',
+  'cfg.moodDeleted',
 ];
 
 class AppState {
@@ -410,6 +412,7 @@ class AppSession extends Notifier<AppState> {
     if (!state.lockEnabled) return; // 锁定保护关闭：不锁
     _session = null;
     _avatars.clear();
+    _mediaCache.clear(); // 媒体明文缓存随锁清空（P1-4 同款纵深防御）
     // 清空内存明文（P1-4 纵深防御）：解锁后 _loadLocalEntries 从密文重建
     state = state.copyWith(locked: true, entries: const []);
   }
@@ -575,12 +578,14 @@ class AppSession extends Notifier<AppState> {
         await db.kvRemove(k);
       }
       _deletedTags.clear();
+      _deletedMoods.clear();
       await db.clearDrafts(); // 输入草稿随注销一并清除（§4.12）
       await db.kvRemove('ui.bio');
       await db.kvRemove('api.token');
       await db.kvRemove('api.deviceId');
       await db.kvRemove('sync.cursor');
       _avatars.clear();
+      _mediaCache.clear(); // 媒体明文缓存随注销一并清除
       await db.clearEntries();
       await db.clearPendingMedia(); // 离线队列（暂存媒体）随注销一并清除
     }
@@ -1345,6 +1350,25 @@ class AppSession extends Notifier<AppState> {
     );
   }
 
+  /// 媒体明文字节（晨 19 §5.3 查看管线）：下载（nonce12 ‖ AES-GCM 密文）→
+  /// 解 CEK 包裹（ECIES 92B）→ AES-GCM 解密。会话级缓存（个人日记量级）；
+  /// 锁定/注销时随内存明文一并清空。空引用（demo/未冲正）不可看。
+  final _mediaCache = <int, Uint8List>{};
+
+  Future<Uint8List> mediaBytes(MediaRef ref) async {
+    final hit = _mediaCache[ref.id];
+    if (hit != null) return hit;
+    if (ref.cekB64.isEmpty) {
+      throw const FormatException('媒体引用无密钥（demo/未冲正）');
+    }
+    final s = _session;
+    if (s == null) throw StateError('未解锁');
+    final blob = await _api.downloadMedia(ref.id);
+    final mCek = await unwrapCek(b64Decode(ref.cekB64), s.privateKey);
+    final plain = await aesGcmDecrypt(mCek, slice(blob, 0, 12), slice(blob, 12));
+    return _mediaCache[ref.id] = plain;
+  }
+
   /// 长按编辑：改文本/心情/标签（可追加新媒体），整条重新加密替换（契约：编辑=整条替换）。
   /// 云端不可达：新媒体本地加密暂存、载荷不带其引用，冲正时上传并注入（离线队列）。
   Future<void> updateEntry(
@@ -1571,6 +1595,12 @@ class AppSession extends Notifier<AppState> {
         for (final v in jList(kv['cfg.tagDeleted']))
           if (v is String) v,
       ]);
+    _deletedMoods
+      ..clear()
+      ..addAll([
+        for (final v in jList(kv['cfg.moodDeleted']))
+          if (v is String) v,
+      ]);
   }
 
   /// 测试钩子：按 init 同款逻辑从注入存储恢复显示配置。
@@ -1663,6 +1693,7 @@ class AppSession extends Notifier<AppState> {
     );
     AppDefaults.customMoods = [...AppDefaults.customMoods, m];
     await _persistCfg();
+    _pushMood(m); // 双写·推（§5.9）：失败静默，端点上线即生效
     return m;
   }
 
@@ -1681,11 +1712,14 @@ class AppSession extends Notifier<AppState> {
           else
             m,
       ];
+      _pushMood(
+          MoodCfg(key: key, emoji: emoji, name: n, colorHex: colorHex));
     } else {
       AppDefaults.moodOverrides = {
         ...AppDefaults.moodOverrides,
         key: MoodCfg(key: key, emoji: emoji, name: n, colorHex: colorHex),
       };
+      // 默认心情显示覆盖不推送（设备本地偏好，§5.9）
     }
     await _persistCfg();
   }
@@ -1695,13 +1729,19 @@ class AppSession extends Notifier<AppState> {
     AppDefaults.customMoods = AppDefaults.customMoods
         .where((m) => m.key != key)
         .toList(growable: false);
+    _deletedMoods.add(key); // 删除名单：拉取补缺过滤防复活（§5.9）
+    await _db?.kvSet('cfg.moodDeleted', jsonEncode(_deletedMoods.toList()));
     await _persistCfg();
+    unawaited(_api.deleteMood(key).catchError((_) {})); // 推失败静默（§5.9）
   }
 
   // ---------- 标签/心情双写与输入草稿（晨 17 §4.1/§4.12） ----------
 
   /// 本地删除名单（契约无标签删除端点，防拉取复活；KV cfg.tagDeleted）。
   final _deletedTags = <String>{};
+
+  /// 心情删除名单（晨 19 §5.9：服务端来源心情删除后防拉取复活；KV cfg.moodDeleted）。
+  final _deletedMoods = <String>{};
 
   /// 双写·推（§4.1）：标签增/改色后 saveTag（同 device 同名=更新，幂等）。
   /// 色推「当前生效色」= 覆盖优先，无覆盖时哈希自动色物化为显式色。
@@ -1710,6 +1750,19 @@ class AppSession extends Notifier<AppState> {
     final color =
         AppDefaults.tagColorOverrides[tag] ?? AppDefaults.tagColorName(tag);
     unawaited(_api.saveTag(name: tag, color: color).catchError((_) => 0));
+  }
+
+  /// 双写·推·心情（§5.9）：自定义心情增/改后 saveMood（同 moodKey=更新幂等）。
+  /// colorHex → 服务端色名反查（tagColorHex 逆查），无匹配推 ''（服务端按缺省）。
+  /// 失败静默——端点未上线（缺口 #8）期间留本地，上线即自动生效。
+  void _pushMood(MoodCfg m) {
+    final colorName = AppDefaults.tagColorHex.entries
+        .where((e) => e.value == m.colorHex)
+        .map((e) => e.key)
+        .firstOrNull;
+    unawaited(_api
+        .saveMood(moodKey: m.key, emoji: m.emoji, color: colorName ?? '')
+        .catchError((_) => 0));
   }
 
   /// 双写·拉（§4.1）：syncNow 挂载。补缺合并——服务器独有的预设/色并入本地
@@ -1740,6 +1793,7 @@ class AppSession extends Notifier<AppState> {
       final add = <MoodCfg>[];
       for (final m in moods) {
         if (known.contains(m.moodKey)) continue;
+        if (_deletedMoods.contains(m.moodKey)) continue; // 删除名单防复活（§5.9）
         add.add(MoodCfg(
           key: m.moodKey,
           emoji: m.emoji,

@@ -331,6 +331,25 @@ class ApiClient {
         .toList();
   }
 
+  /// 心情写入（晨 19 §5.9，缺口 #8 提案）：镜像 saveTag——同 moodKey=更新幂等。
+  /// 端点未上线前调用失败由调用方静默吞掉（推送先行模式，端点上线即生效）。
+  Future<int> saveMood({
+    required String moodKey,
+    required String emoji,
+    required String color,
+  }) async {
+    final data = await _post('/api/v1/diary/config/moods', {
+      'moodKey': moodKey,
+      'emoji': emoji,
+      'color': color,
+    });
+    return (data['id'] as num).toInt();
+  }
+
+  Future<void> deleteMood(String moodKey) async {
+    await _post('/api/v1/diary/config/moods/delete', {'moodKey': moodKey});
+  }
+
   Future<void> notify({required String title, required String message}) async {
     await _post('/api/v1/diary/notify', {'title': title, 'message': message});
   }

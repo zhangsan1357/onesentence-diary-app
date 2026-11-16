@@ -13,7 +13,11 @@ import 'package:flutter_test/flutter_test.dart';
 
 class CfgFakeApi extends ApiClient {
   int nextTagId = 10;
+  int nextMoodId = 100;
   final tagSaves = <({String name, String color})>[];
+  final moodSaves = <({String moodKey, String emoji, String color})>[];
+  final moodDeletes = <String>[];
+  bool failMoodWrite = false; // 推送失败静默验证
   List<TagCfg> serverTags = [];
   List<MoodCfgServer> serverMoods = [];
 
@@ -52,6 +56,37 @@ class CfgFakeApi extends ApiClient {
 
   @override
   Future<List<MoodCfgServer>> configMoods() async => serverMoods;
+
+  @override
+  Future<int> saveMood({
+    required String moodKey,
+    required String emoji,
+    required String color,
+  }) async {
+    if (failMoodWrite) throw Exception('端点未上线（404 同型）');
+    moodSaves.add((moodKey: moodKey, emoji: emoji, color: color));
+    final existing = serverMoods.indexWhere((m) => m.moodKey == moodKey);
+    if (existing >= 0) {
+      final old = serverMoods[existing];
+      serverMoods[existing] = MoodCfgServer(
+          moodKey: moodKey, emoji: emoji, color: color, sort: old.sort);
+      return old.sort;
+    }
+    serverMoods = [
+      ...serverMoods,
+      MoodCfgServer(
+          moodKey: moodKey, emoji: emoji, color: color, sort: nextMoodId),
+    ];
+    return nextMoodId++;
+  }
+
+  @override
+  Future<void> deleteMood(String moodKey) async {
+    if (failMoodWrite) throw Exception('端点未上线（404 同型）');
+    moodDeletes.add(moodKey);
+    serverMoods =
+        [for (final m in serverMoods) if (m.moodKey != moodKey) m];
+  }
 }
 
 void main() {
@@ -138,6 +173,56 @@ void main() {
     expect(AppDefaults.customMoods
         .where((m) => m.key == 'm1')
         .single.emoji, '🚀', reason: '本地自定义优先');
+  });
+
+  test('双写·推·心情（§5.9）：自定义增/改 → saveMood（colorHex 反查色名），默认覆盖不推', () async {
+    await bootstrap();
+    final m = await session.addMood('冲', '🚀', AppDefaults.tagColorHex['blue']!);
+    expect(fake.moodSaves.single.moodKey, m.key);
+    expect(fake.moodSaves.single.emoji, '🚀');
+    expect(fake.moodSaves.single.color, 'blue', reason: 'colorHex → 色名反查');
+    expect(fake.serverMoods.where((x) => x.moodKey == m.key).single.emoji, '🚀',
+        reason: '同 moodKey=更新幂等');
+    await session.updateMood(m.key, '🌟', '冲鸭', AppDefaults.tagColorHex['red']!);
+    expect(fake.moodSaves.length, 2);
+    expect(fake.moodSaves.last, (moodKey: m.key, emoji: '🌟', color: 'red'));
+    final n = fake.moodSaves.length;
+    await session.updateMood('happy', '😄', '开心改', AppDefaults.tagColorHex['blue']!);
+    expect(fake.moodSaves.length, n, reason: '默认心情显示覆盖不推送（设备本地）');
+    expect(AppDefaults.moodOverrides['happy']!.name, '开心改');
+  });
+
+  test('心情删除名单防复活（§5.9）：删除服务端来源心情 → 拉取不再并入 + 名单持久化', () async {
+    await bootstrap();
+    fake.serverMoods = [
+      MoodCfgServer(moodKey: 'm77', emoji: '🧘', color: 'blue', sort: 7),
+    ];
+    await session.syncNow();
+    expect(AppDefaults.customMoods.map((m) => m.key), contains('m77'),
+        reason: '先补缺并入');
+    await session.removeMood('m77');
+    expect(AppDefaults.customMoods.map((m) => m.key), isNot(contains('m77')));
+    expect(fake.moodDeletes, ['m77'], reason: '删除推 deleteMood（静默）');
+    final kv = await store.kvAll();
+    expect(jsonDecode(kv['cfg.moodDeleted']!), contains('m77'));
+    await session.syncNow();
+    expect(AppDefaults.customMoods.map((m) => m.key), isNot(contains('m77')),
+        reason: '拉取补缺过滤名单 → 不复活');
+  });
+
+  test('心情推送失败静默（§5.9）：端点未上线不冒泡、本地照常生效', () async {
+    await bootstrap();
+    fake.failMoodWrite = true;
+    final m = await session.addMood('冲', '🚀', AppDefaults.tagColorHex['blue']!);
+    expect(AppDefaults.customMoods.map((x) => x.key), contains(m.key),
+        reason: '本地照常落（推送先行模式）');
+    expect(fake.moodSaves, isEmpty, reason: '失败不记桩');
+    await session.removeMood(m.key);
+    expect(fake.moodDeletes, isEmpty, reason: '删除推失败同样静默');
+    expect(AppDefaults.customMoods.map((x) => x.key), isNot(contains(m.key)));
+    final kv = await store.kvAll();
+    expect(jsonDecode(kv['cfg.moodDeleted']!), contains(m.key),
+        reason: '名单仍持久化（复活防护不依赖端点）');
   });
 
   test('草稿：保存→读取往返；防抖合并写；清除后为空', () async {
