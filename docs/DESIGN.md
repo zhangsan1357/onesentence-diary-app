@@ -563,3 +563,30 @@ SwiftUI 版本。现状架构已天然友好（逻辑层纯 Dart、UI 全 Cupert
 
 **测试映射追加**：draft_config_test 扩展——自定义心情推送调用断言（emoji/color 形态）、
 删除名单防复活（删除后拉取不并入、名单 KV 持久化）、推送失败静默（FakeApi 抛错不冒泡）。
+
+### 5.10 晨 19 收尾（后端已就绪）：stats 消费 + 身份变更入口打开 + live 联调
+
+后端会话 A 已实现并重启（stats/顺序契约/游标/mood 写入/rename/rotate）。对齐项核实：
+
+1. **streak 定义一致（零代码改动，测试钉死）**：服务端（其 DESIGN §6.1.1）锚点 =
+   今天有记录 ? 今天 : (昨天有记录 ? 昨天 : 无) → 向前逐日连续，今天昨天都无 = 0——
+   与客户端 `computeStreak` 逐字同语义（今天未写不断签）。新增边界单测三类钉死。
+2. **heatmap 稀疏格式一致**：服务端仅含有记录的日子（date ASC），客户端
+   `heatmapCounts` 本来就是稀疏 map（date→count），回忆页 182 格渲染对缺失日
+   `counts[date] ?? 0` 自填零值——已一致，零改动；**服务端 heatmap/perMonth 暂不
+   消费**（客户端本地已有全量明文索引，拉服务端副本无收益），字段解析保留备用。
+3. **stats 消费（减负兑现）**：api_client `stats({days=365})` 解析
+   `{total, days, streak, heatmap, perMonth}`；`AppState.stats`（nullable）在
+   syncNow 成功后拉取（失败静默保留旧值=离线兜底）；me 页总条数/连续天数、回忆页
+   连续天数 hero 改为 **服务器优先、本地计算兜底**（stats==null 或 demo 时本地）；
+   标签数仍本地（密文内，服务端不可见）。
+4. **身份变更入口打开（§5.4 约定端点就绪一次性打开）**：me 页安全组增两行——
+   「更改注册名」（新名校验+强确认「旧名无法再登录」→ renameIdentity）、「更换
+   主密钥」（强确认文案→锁定开启时需口令→rotateIdentity→**新 12 词 12 宫格展示
+   强提示抄写**）。
+5. **live 联调扩展**（`test/live/integration_live_test.dart`，后端在跑才执行）：
+   stats 形状/值断言（建条目后 total/streak/heatmap 稀疏）、rename（重注册同
+   userKey）、rotate（换 userKey 换 token）、saveMood/deleteMood（写入回读）。
+
+**测试映射**：stats_sync_test（解析/syncNow 置位/失败保留/computeStreak 边界 3 类）+
+identity_change_test 不变 + live 4 项。
