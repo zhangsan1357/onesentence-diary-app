@@ -117,6 +117,19 @@ class MePage extends ConsumerWidget {
                   '服务端只见密文。私钥不出设备：Argon2id(口令, 盐) 派生主密钥包裹私钥，盐不上传。\n${state.serverStatus ?? ''}'),
             ),
             IosRow(
+              icon: Icons.badge_outlined,
+              iconBg: const Color(0xFF0A84FF),
+              title: '更改注册名',
+              value: state.userId,
+              onTap: () => showRenameIdentityDialog(context, ref),
+            ),
+            IosRow(
+              icon: Icons.vpn_key_outlined,
+              iconBg: const Color(0xFFFF9500),
+              title: '更换 12 词主密钥',
+              onTap: () => showRotateIdentityDialog(context, ref),
+            ),
+            IosRow(
               icon: Icons.key,
               iconBg: const Color(0xFF5E5CE6),
               title: '更换锁定口令',

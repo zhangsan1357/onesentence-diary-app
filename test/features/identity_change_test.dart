@@ -20,7 +20,7 @@ class FakeApi extends ApiClient {
   int nextMediaId = 900;
   final mediaById = <int, List<int>>{};
   final renames = <String>[];
-  final rotates = <String>[];
+  final rotates = <({String key, String otp})>[]; // key=新 userKey；otp=调用时口令钥
   final registers = <({String userId, String userKeyHex})>[];
   final replaces = <int>[];
   bool online = true;
@@ -64,7 +64,7 @@ class FakeApi extends ApiClient {
   @override
   Future<DeviceRegResult> rotate({required String userKeyHex}) async {
     if (failRotate) throw _net();
-    rotates.add(userKeyHex);
+    rotates.add((key: userKeyHex, otp: otpKey ?? '')); // 捕获调用时口令钥
     return DeviceRegResult(token: 't-rotate', deviceId: 2);
   }
 
@@ -210,12 +210,14 @@ void main() {
     expect(() => RecoveryWords.validate(newWords), returnsNormally,
         reason: '返回新 12 词');
     expect(fake.rotates.length, 1, reason: 'rotate 端点一次');
-    expect(fake.rotates.single, isNot(oldPub), reason: '新 userKey');
+    expect(fake.rotates.single.key, isNot(oldPub), reason: '新 userKey');
+    expect(fake.rotates.single.otp, oldPub,
+        reason: '协议注意 1：rotate 口令必须用旧钥算（门先于控制器）');
     expect(fake.replaces.length, 2, reason: '两条已上云条目全量重加密');
 
     // keystore：新身份落盘
     final ks = (await keystoreSession()).keystore;
-    expect(ks.publicKeyHex, fake.rotates.single);
+    expect(ks.publicKeyHex, fake.rotates.single.key);
     expect(ks.recoveryCode, newWords, reason: '恢复词=新 12 词');
     expect(fake.registers.length, regCount, reason: '走 rotate 端点，不再走 registerDevice');
     // KV 暂存清理
@@ -272,8 +274,10 @@ void main() {
     // 正常换钥（在线），验证续跑挂钩存在：KV 清理后 debugResumeRotate 无操作
     await session.rotateIdentity();
     expect(fake.rotates.length, 1);
+    final regBase = fake.registers.length;
     await session.debugResumeRotate();
-    expect(fake.rotates.length, 1, reason: '无暂存 → 续跑为空操作');
+    expect(fake.registers.length, regBase, reason: '无暂存 → 续跑为空操作');
+    expect(fake.rotates.length, 1);
     // 中断续跑：手工布置暂存场景（keystore 已新、进度 1、暂存旧钥）
     // —— 通过 failRotate 制造 ④ 中断：rotate 抛出 → rotateOld/rotateDone 留存
     // → debugResumeRotate 用 rotate 端点完成收尾。
@@ -287,10 +291,14 @@ void main() {
     expect(fake.rotates.length, 1, reason: 'rotate 失败不记');
     final kv = await store.kvAll();
     expect(kv['cfg.rotateOld'], isNotNull, reason: '③ 已完成、④ 失败 → 暂存留存');
+    expect(kv['cfg.rotateOldPub'], isNotNull, reason: '旧公钥留存（兜底 rotate 用）');
     expect(int.parse(kv['cfg.rotateDone']!), 2, reason: '两条都已重加密');
     fake.failRotate = false;
+    final regCount = fake.registers.length;
     await session.debugResumeRotate();
-    expect(fake.rotates.length, 2, reason: '续跑补 ④⑤');
+    expect(fake.registers.length, regCount + 1,
+        reason: '协议注意 2：续跑用新钥直接 register 续接（不重试 rotate）');
+    expect(fake.rotates.length, 1, reason: '不重试 rotate');
     final kv2 = await store.kvAll();
     expect(kv2['cfg.rotateOld'], isNull, reason: '续跑后清暂存');
     expect(container.read(appSessionProvider).entries.first.cipherJson,

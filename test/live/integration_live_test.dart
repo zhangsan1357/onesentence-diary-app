@@ -344,4 +344,89 @@ void main() {
       expect(e.message, contains('未配置'));
     }
   });
+
+  // ---------- 晨 19 增量端点（stats/顺序契约、rename/rotate 缺口 #7、mood 缺口 #8） ----------
+
+  /// 独立身份（互不污染计数/名单）。
+  Future<ApiClient> fresh(String tag) async {
+    final a = ApiClient();
+    final r = await a.registerDevice(
+      userId: 'live-$tag-$runId',
+      deviceNo: 'dev-$tag-$runId',
+      name: 'flutter-live',
+      userKeyHex: _pubHex,
+    );
+    a.token = r.token;
+    a.otpKey = _pubHex;
+    return a;
+  }
+
+  Future<int> create(ApiClient a, String time, String text) async {
+    final payload = EntryPayload(text: text, time: time, mood: null);
+    final cipherJson =
+        await Envelope.encryptJson(utf8.encode(payload.encode()), hexDecode(_pubHex));
+    final parts = jsonDecode(cipherJson) as Map<String, dynamic>;
+    return a.createEntry(
+      entryDate: _today(),
+      ciphertext: parts['ciphertext'] as String,
+      nonceContent: parts['nonce_content'] as String,
+      encryptedCek: parts['encrypted_cek'] as String,
+    );
+  }
+
+  test('M3-15 stats：total/streak/heatmap 稀疏+date ASC/perMonth（晨 19 对齐项）', () async {
+    final a = await fresh('st');
+    await create(a, '08:00', 'stats 一');
+    await create(a, '21:00', 'stats 二');
+    final s = await a.stats();
+    expect(s.total, 2, reason: '独立身份恰好两条');
+    expect(s.streak, greaterThanOrEqualTo(1), reason: '今天有记录 → 锚点今天');
+    expect(s.heatmap, isNotEmpty);
+    for (final d in s.heatmap) {
+      expect(d.count, greaterThan(0), reason: '稀疏：零值日不出现，客户端自填');
+    }
+    final dates = s.heatmap.map((d) => d.date).toList();
+    expect(dates, equals(dates.toList()..sort()), reason: 'date ASC');
+    expect(dates.last, _today(), reason: '窗口含今天');
+    expect(s.perMonth.map((m) => m.month), contains(_month()));
+  });
+
+  test('M3-16 rename（缺口 #7）：改名 → 新名重注册同 userKey 成功', () async {
+    final a = await fresh('rn');
+    await a.rename('live-rn2-$runId');
+    final b = ApiClient();
+    final r = await b.registerDevice(
+      userId: 'live-rn2-$runId',
+      deviceNo: 'dev-rn2-$runId',
+      name: 'flutter-live',
+      userKeyHex: _pubHex,
+    );
+    expect(r.token.length, 64, reason: '数据空间已重键到新名');
+  });
+
+  test('M3-17 rotate（缺口 #7）：换 userKey 换 token → 新钥可写', () async {
+    final a = await fresh('ro');
+    final k2 = 'cd' * 32;
+    final r2 = await a.rotate(userKeyHex: k2);
+    expect(r2.token.length, 64);
+    a.token = r2.token;
+    a.otpKey = k2;
+    final id = await create(a, '10:00', 'rotate 后新钥写入');
+    expect(id, greaterThan(0), reason: '新 userKey 放行后业务可用');
+  });
+
+  test('M3-18 mood 写入/删除（缺口 #8）：saveMood 回读 → deleteMood 消失', () async {
+    final a = await fresh('mo');
+    final key = 'lm$runId'; // 1~16 位小写/数字/下划线（服务端校验）
+    final id = await a.saveMood(moodKey: key, emoji: '🚀', color: '#34C759');
+    expect(id, greaterThan(0));
+    final moods = await a.configMoods();
+    final mine = moods.where((m) => m.moodKey == key).toList();
+    expect(mine.length, 1);
+    expect(mine.single.emoji, '🚀');
+    expect(mine.single.color, '#34C759');
+    await a.deleteMood(key);
+    final after = await a.configMoods();
+    expect(after.where((m) => m.moodKey == key), isEmpty);
+  });
 }

@@ -175,17 +175,22 @@ void main() {
         .single.emoji, '🚀', reason: '本地自定义优先');
   });
 
-  test('双写·推·心情（§5.9）：自定义增/改 → saveMood（colorHex 反查色名），默认覆盖不推', () async {
+  test('双写·推·心情（§5.9/§5.10）：自定义增/改 → saveMood（colorHex→#RRGGBB），默认覆盖不推', () async {
     await bootstrap();
     final m = await session.addMood('冲', '🚀', AppDefaults.tagColorHex['blue']!);
     expect(fake.moodSaves.single.moodKey, m.key);
     expect(fake.moodSaves.single.emoji, '🚀');
-    expect(fake.moodSaves.single.color, 'blue', reason: 'colorHex → 色名反查');
+    expect(fake.moodSaves.single.color,
+        matches(RegExp(r'^#[0-9A-Fa-f]{6}$')), reason: 'colorHex → #RRGGBB（服务端契约）');
+    expect(fake.moodSaves.single.color,
+        '#${(AppDefaults.tagColorHex['blue']! & 0xFFFFFF).toRadixString(16).toUpperCase().padLeft(6, '0')}');
     expect(fake.serverMoods.where((x) => x.moodKey == m.key).single.emoji, '🚀',
         reason: '同 moodKey=更新幂等');
     await session.updateMood(m.key, '🌟', '冲鸭', AppDefaults.tagColorHex['red']!);
     expect(fake.moodSaves.length, 2);
-    expect(fake.moodSaves.last, (moodKey: m.key, emoji: '🌟', color: 'red'));
+    expect(
+        fake.moodSaves.last.moodKey, m.key, reason: '同 moodKey 幂等更新');
+    expect(fake.moodSaves.last.emoji, '🌟');
     final n = fake.moodSaves.length;
     await session.updateMood('happy', '😄', '开心改', AppDefaults.tagColorHex['blue']!);
     expect(fake.moodSaves.length, n, reason: '默认心情显示覆盖不推送（设备本地）');

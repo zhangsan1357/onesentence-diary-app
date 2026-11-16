@@ -1025,3 +1025,138 @@ Future<void> showExportDialog(BuildContext context, WidgetRef ref) async {
     title: '一句话日记.md',
   ));
 }
+
+/// 更改注册名（晨 19 §5.10，缺口 #7 端点已就绪）：强确认「旧名无法再登录」。
+Future<void> showRenameIdentityDialog(BuildContext context, WidgetRef ref) async {
+  final ctrl = TextEditingController(text: ref.read(appSessionProvider).userId);
+  await showDialog(
+    context: context,
+    builder: (ctx) => AlertDialog(
+      title: const Text('更改注册名'),
+      content: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          const Text('注册名是登录身份：旧名从此无法再登录，其他设备需用新名 + 原恢复词登录。',
+              style: TextStyle(fontSize: 13)),
+          const SizedBox(height: 12),
+          TextField(
+            controller: ctrl,
+            decoration: const InputDecoration(
+              hintText: '新注册名',
+              border: OutlineInputBorder(),
+              isDense: true,
+            ),
+          ),
+        ],
+      ),
+      actions: [
+        TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('取消')),
+        TextButton(
+          onPressed: () async {
+            try {
+              await ref
+                  .read(appSessionProvider.notifier)
+                  .renameIdentity(ctrl.text.trim());
+              if (ctx.mounted) Navigator.pop(ctx);
+            } catch (e) {
+              if (ctx.mounted) {
+                Navigator.pop(ctx);
+                showInfoDialog(context, '更改失败', '$e');
+              }
+            }
+          },
+          child: const Text('确认更改'),
+        ),
+      ],
+    ),
+  );
+}
+
+/// 更换 12 词主密钥（晨 19 §5.4/§5.10）：全量重加密；成功后新词宫格展示，
+/// barrierDismissible=false 必须点「我已抄写」才可离开。
+Future<void> showRotateIdentityDialog(BuildContext context, WidgetRef ref) async {
+  final ok = await showDialog<bool>(
+    context: context,
+    builder: (ctx) => AlertDialog(
+      title: const Text('更换 12 词主密钥'),
+      content: const Text(
+          '将生成新的 12 词恢复词，并把全部日记重加密到新密钥（媒体无需重传）。\n\n'
+          '⚠ 旧恢复词立即作废；其他设备（持旧词）将无法再解密新数据。\n'
+          '请准备纸笔抄写。'),
+      actions: [
+        TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('取消')),
+        TextButton(
+            onPressed: () => Navigator.pop(ctx, true), child: const Text('开始更换')),
+      ],
+    ),
+  );
+  if (ok != true) return;
+  if (!context.mounted) return;
+  String passcode = '';
+  if (ref.read(appSessionProvider).lockEnabled) {
+    final ctrl = TextEditingController();
+    passcode = await showDialog<String>(
+          context: context,
+          builder: (ctx) => AlertDialog(
+            title: const Text('输入锁定口令'),
+            content: _passField(ctrl, '当前锁定口令'),
+            actions: [
+              TextButton(
+                  onPressed: () => Navigator.pop(ctx),
+                  child: const Text('取消')),
+              TextButton(
+                  onPressed: () => Navigator.pop(ctx, ctrl.text),
+                  child: const Text('继续')),
+            ],
+          ),
+        ) ??
+        '';
+    if (passcode.isEmpty) return;
+  }
+  if (!context.mounted) return;
+  try {
+    final words =
+        await ref.read(appSessionProvider.notifier).rotateIdentity(passcode: passcode);
+    final list = words.trim().split(RegExp(r'\s+'));
+    if (!context.mounted) return;
+    await showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (ctx) => AlertDialog(
+        title: const Text('新恢复词 · 立即抄写'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Wrap(
+              spacing: 6,
+              runSpacing: 6,
+              children: [
+                for (final (i, w) in list.indexed)
+                  Container(
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 8, vertical: 5),
+                    decoration: BoxDecoration(
+                      color: Theme.of(context).colorScheme.surfaceContainerHighest,
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                    child: Text('${i + 1}. $w',
+                        style: const TextStyle(
+                            fontSize: 14, fontWeight: FontWeight.w600)),
+                  ),
+              ],
+            ),
+            const SizedBox(height: 12),
+            const Text('旧恢复词已作废。这 12 个词只展示这一次——\n丢失 = 永久丢失全部日记。',
+                style: TextStyle(fontSize: 12)),
+          ],
+        ),
+        actions: [
+          TextButton(
+              onPressed: () => Navigator.pop(ctx), child: const Text('我已抄写')),
+        ],
+      ),
+    );
+  } catch (e) {
+    if (context.mounted) showInfoDialog(context, '更换失败', '$e');
+  }
+}

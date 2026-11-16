@@ -119,6 +119,46 @@ class MoodCfgServer {
       );
 }
 
+/// 统计聚合（晨 19 §5.10，服务端 EntryService.stats，仅日期元数据 E2EE 兼容）。
+/// streak：锚点=今天有记录?今天:(昨天有记录?昨天:无)→向前逐日连续，今天昨天都无=0
+/// ——与客户端 computeStreak 同语义。heatmap/perMonth 解析保留备用（客户端本地
+/// 已有全量明文索引，暂不消费）。
+class StatsResult {
+  final int total; // 未删除条目总数
+  final int days; // 有记录天数
+  final int streak; // 当前连续天数
+  final List<({String date, int count})> heatmap; // date ASC 稀疏（仅有记录日）
+  final List<({String month, int count})> perMonth; // month ASC 全史
+
+  const StatsResult({
+    required this.total,
+    required this.days,
+    required this.streak,
+    required this.heatmap,
+    required this.perMonth,
+  });
+
+  factory StatsResult.fromJson(Map<String, dynamic> j) => StatsResult(
+        total: (j['total'] as num?)?.toInt() ?? 0,
+        days: (j['days'] as num?)?.toInt() ?? 0,
+        streak: (j['streak'] as num?)?.toInt() ?? 0,
+        heatmap: [
+          for (final e in (j['heatmap'] as List?) ?? const [])
+            (
+              date: (e as Map<String, dynamic>)['date'] as String,
+              count: ((e)['count'] as num?)?.toInt() ?? 0,
+            ),
+        ],
+        perMonth: [
+          for (final e in (j['perMonth'] as List?) ?? const [])
+            (
+              month: (e as Map<String, dynamic>)['month'] as String,
+              count: ((e)['count'] as num?)?.toInt() ?? 0,
+            ),
+        ],
+      );
+}
+
 class ApiClient {
   final Dio _dio;
 
@@ -329,6 +369,13 @@ class ApiClient {
     return (data as List)
         .map((e) => MoodCfgServer.fromJson(e as Map<String, dynamic>))
         .toList();
+  }
+
+  /// 统计聚合（§5.10）：total/days/streak/heatmap/perMonth，仅日期元数据。
+  Future<StatsResult> stats({int days = 365}) async {
+    final data =
+        await _get('/api/v1/diary/stats', query: {'days': days}) as Map<String, dynamic>;
+    return StatsResult.fromJson(data);
   }
 
   /// 心情写入（晨 19 §5.9，缺口 #8 提案）：镜像 saveTag——同 moodKey=更新幂等。

@@ -52,6 +52,9 @@ const cfgKvKeys = [
   'cfg.moodCustom',
   'cfg.tagDeleted',
   'cfg.moodDeleted',
+  'cfg.rotateOld',
+  'cfg.rotateOldPub',
+  'cfg.rotateDone',
 ];
 
 class AppState {
@@ -78,6 +81,7 @@ class AppState {
   final int cfgVersion; // 标签/心情显示配置版本（变更自增，驱动 UI 重建）
   final int pendingCount; // 离线队列长度（云端不可达时本地暂存的增删改条数）
   final int dataRev; // 同步代次（syncNow 成功自增；驱动一次性 UI 动作如收起评论，晨 17）
+  final StatsResult? stats; // 服务端统计（晨 19 §5.10：total/days/streak；失败静默保留旧值）
 
   const AppState({
     this.ready = false,
@@ -103,6 +107,7 @@ class AppState {
     this.cfgVersion = 0,
     this.pendingCount = 0,
     this.dataRev = 0,
+    this.stats,
   });
 
   bool get unlocked => ready && !locked;
@@ -134,6 +139,7 @@ class AppState {
     int? cfgVersion,
     int? pendingCount,
     int? dataRev,
+    StatsResult? stats,
   }) =>
       AppState(
         ready: ready ?? this.ready,
@@ -160,6 +166,7 @@ class AppState {
         cfgVersion: cfgVersion ?? this.cfgVersion,
         pendingCount: pendingCount ?? this.pendingCount,
         dataRev: dataRev ?? this.dataRev,
+        stats: stats ?? this.stats,
       );
 }
 
@@ -773,6 +780,7 @@ class AppSession extends Notifier<AppState> {
       await flushNow();
       await _syncOnce();
       await _syncCfg(); // 标签/心情显示配置双写·拉（§4.1，内部吞错）
+      await _fetchStats(); // 服务端统计（§5.10，失败静默保留旧值）
       _set((s) => s.copyWith(
             clearSyncError: true,
             dataRev: s.dataRev + 1, // 同步代次：驱动一次性 UI 动作（收起评论，§4.4）
@@ -784,6 +792,7 @@ class AppSession extends Notifier<AppState> {
         await flushNow();
         await _syncOnce();
         await _syncCfg();
+        await _fetchStats();
         _set((s) => s.copyWith(
               clearSyncError: true,
               dataRev: s.dataRev + 1,
@@ -796,6 +805,29 @@ class AppSession extends Notifier<AppState> {
             ));
         rethrow;
       }
+    }
+  }
+
+  /// mood color 解析（§5.10 契约修正）：#RRGGBB hex 优先（服务端校验/种子格式），
+  /// 兼容色名（tagColorHex 反查），兜底灰。
+  int _moodColorOf(String color) {
+    final c = color.trim();
+    if (c.length == 7 && c.startsWith('#')) {
+      final v = int.tryParse(c.substring(1), radix: 16);
+      if (v != null) return 0xFF000000 | v;
+    }
+    return AppDefaults.tagColorHex[c] ?? 0xFF8E8E93;
+  }
+
+  /// 服务端统计拉取（晨 19 §5.10）：失败静默保留旧值——离线时 me/memory 页回落
+  /// 本地计算（computeStreak/totalAndTags），语义与服务端定义一致（§5.10-1）。
+  Future<void> _fetchStats() async {
+    if (_demo) return;
+    try {
+      final st = await _api.stats();
+      _set((s) => s.copyWith(stats: st));
+    } catch (_) {
+      // 网络不可达/端点异常：保留旧 stats（本地兜底）
     }
   }
 
@@ -1556,11 +1588,13 @@ class AppSession extends Notifier<AppState> {
         'cfg.rotateOld',
         b64Encode(
             await wrapCek(s.privateKey, newSess.publicKey))); // 旧私钥可解包
+    await _db!.kvSet(
+        'cfg.rotateOldPub', s.keystore.publicKeyHex); // 旧公钥：rotate 口令用
     await _db!.kvSet('cfg.rotateDone', '0');
     _session = newSess;
     _api.otpKey = ks.publicKeyHex;
     await _rotateEntries(s.privateKey); // ③ 全量重加密
-    await _rotateRegister(ks); // ④ rotate 端点：换 userKey + 新 token
+    await _rotateRegister(ks, s.keystore.publicKeyHex); // ④ rotate 端点：旧钥口令 + 新 token
     await _clearRotateTemp(); // ⑤
     await _loadLocalEntries();
     _set((st) => st.copyWith(toast: '主密钥已更换 · 请立即抄写新恢复词'));
@@ -1630,17 +1664,28 @@ class AppSession extends Notifier<AppState> {
   }
 
   /// ④ rotate 端点：同 userId 换 userKey（服务端原子更新）+ 新 token 落盘。
-  Future<void> _rotateRegister(KeystoreData ks) async {
-    final reg = await _api.rotate(userKeyHex: ks.publicKeyHex);
-    _api.token = reg.token;
-    _api.otpKey = ks.publicKeyHex;
-    await _db!.kvSet('api.token', reg.token);
-    await _db!.kvSet('api.deviceId', '${reg.deviceId}');
-    _set((st) => st.copyWith(serverStatus: '已换钥注册 · 设备#${reg.deviceId}'));
+  /// 协议注意 1（§5.4）：鉴权门先于控制器——rotate 请求必须用**旧钥**算
+  /// X-Diary-Pass（服务端此刻还持旧钥），成功后切新钥；失败恢复调用前值。
+  Future<void> _rotateRegister(KeystoreData ks, String oldKeyHex) async {
+    final saved = _api.otpKey;
+    _api.otpKey = oldKeyHex;
+    try {
+      final reg = await _api.rotate(userKeyHex: ks.publicKeyHex);
+      _api.token = reg.token;
+      _api.otpKey = ks.publicKeyHex;
+      await _db!.kvSet('api.token', reg.token);
+      await _db!.kvSet('api.deviceId', '${reg.deviceId}');
+      _set((st) =>
+          st.copyWith(serverStatus: '已换钥注册 · 设备#${reg.deviceId}'));
+    } catch (_) {
+      _api.otpKey = saved;
+      rethrow;
+    }
   }
 
   Future<void> _clearRotateTemp() async {
     await _db!.kvRemove('cfg.rotateOld');
+    await _db!.kvRemove('cfg.rotateOldPub');
     await _db!.kvRemove('cfg.rotateDone');
   }
 
@@ -1654,8 +1699,16 @@ class AppSession extends Notifier<AppState> {
       if (old == null) return;
       final s = _session!;
       final oldPriv = await unwrapCek(b64Decode(old), s.privateKey);
+      final oldPubHex = await _db!.kvGet('cfg.rotateOldPub') ?? '';
       await _rotateEntries(oldPriv);
-      await _rotateRegister(s.keystore);
+      // 协议注意 2（§5.4）：续跑用新钥直接 register 续接（服务端已在 rotate 时
+      // 换钥）；register 被拒 = rotate 从未落服务端的窗口 → 兜底 rotate 一次
+      //（此时服务端仍持旧钥，旧钥口令才可能通过）。
+      try {
+        await _register();
+      } catch (_) {
+        await _rotateRegister(s.keystore, oldPubHex);
+      }
       await _clearRotateTemp();
       await _loadLocalEntries();
       _set((st) => st.copyWith(toast: '主密钥轮换已续完 · 请确认恢复词'));
@@ -1942,16 +1995,14 @@ class AppSession extends Notifier<AppState> {
     unawaited(_api.saveTag(name: tag, color: color).catchError((_) => 0));
   }
 
-  /// 双写·推·心情（§5.9）：自定义心情增/改后 saveMood（同 moodKey=更新幂等）。
-  /// colorHex → 服务端色名反查（tagColorHex 逆查），无匹配推 ''（服务端按缺省）。
-  /// 失败静默——端点未上线（缺口 #8）期间留本地，上线即自动生效。
+  /// 双写·推·心情（§5.9，§5.10 契约修正）：自定义心情增/改后 saveMood（同
+  /// moodKey=更新幂等）。**服务端 color 契约 = #RRGGBB 六位 hex**（校验+种子同
+  /// 格式，与 saveTag 色名语义不同）→ colorHex 取低 24 位格式化。失败静默。
   void _pushMood(MoodCfg m) {
-    final colorName = AppDefaults.tagColorHex.entries
-        .where((e) => e.value == m.colorHex)
-        .map((e) => e.key)
-        .firstOrNull;
+    final hex =
+        '#${(m.colorHex & 0xFFFFFF).toRadixString(16).toUpperCase().padLeft(6, '0')}';
     unawaited(_api
-        .saveMood(moodKey: m.key, emoji: m.emoji, color: colorName ?? '')
+        .saveMood(moodKey: m.key, emoji: m.emoji, color: hex)
         .catchError((_) => 0));
   }
 
@@ -1988,7 +2039,7 @@ class AppSession extends Notifier<AppState> {
           key: m.moodKey,
           emoji: m.emoji,
           name: m.emoji.isEmpty ? '心情' : m.moodKey,
-          colorHex: AppDefaults.tagColorHex[m.color] ?? 0xFF8E8E93,
+          colorHex: _moodColorOf(m.color),
         ));
       }
       if (add.isNotEmpty) {

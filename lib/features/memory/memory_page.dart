@@ -29,7 +29,7 @@ class _MemoryPageState extends ConsumerState<MemoryPage> {
 
     final streak = state.demo
         ? demoStreak
-        : computeStreak(state.entries, today);
+        : (state.stats?.streak ?? computeStreak(state.entries, today));
     final yearAgo = state.demo
         ? DiaryEntry(
             localId: 'demo-year-ago',
