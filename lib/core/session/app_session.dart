@@ -981,6 +981,9 @@ class AppSession extends Notifier<AppState> {
         date: se.entryDate,
         cipherJson: cipherJson,
         updatedAtMs: _isoToMs(se.updatedAt),
+        // 新行创建序回填（服务端无 created_at 元数据，updatedAt 近似，晨 19 §5.8）；
+        // 已有行 null = 保留原创建序
+        createdAtMs: local == null ? _isoToMs(se.updatedAt) : null,
         deleted: false,
       );
     }
@@ -1039,6 +1042,9 @@ class AppSession extends Notifier<AppState> {
         payload: payload,
         cipherJson: cipher,
         updatedAt: DateTime.fromMillisecondsSinceEpoch(r.updatedAtMs),
+        createdAt: r.createdAtMs == 0
+            ? null
+            : DateTime.fromMillisecondsSinceEpoch(r.createdAtMs),
         deleted: r.deleted,
         avatarUrl: _avatars[r.localId],
         textPending: parsePendingMeta(r.pendingMeta).text,
@@ -1055,6 +1061,7 @@ class AppSession extends Notifier<AppState> {
     required String date,
     String? cipherJson,
     required int updatedAtMs,
+    int? createdAtMs, // null = 不改动（创建序不可覆盖，晨 19 §5.8）
     bool deleted = false,
     int? syncState, // null = 不改动（保留现有状态）
     String? pendingMeta, // null = 不改动；'' = 清空标记
@@ -1068,6 +1075,9 @@ class AppSession extends Notifier<AppState> {
       payloadJson: cipherJson ?? '',
       cipherJson: driftStr(cipherJson),
       updatedAtMs: updatedAtMs,
+      createdAtMs: createdAtMs == null
+          ? const Value.absent()
+          : Value(createdAtMs),
       deleted: driftBool(deleted),
       syncState:
           syncState == null ? const Value.absent() : Value(syncState),
@@ -1164,6 +1174,7 @@ class AppSession extends Notifier<AppState> {
       date: date,
       cipherJson: cipherJson,
       updatedAtMs: now.millisecondsSinceEpoch,
+      createdAtMs: now.millisecondsSinceEpoch, // 创建序只在此写一次（§5.8）
       syncState: 1,
       pendingMeta: encodePendingMeta(true, const []), // 整条待上云 → 正文标 *
     );
@@ -1174,6 +1185,7 @@ class AppSession extends Notifier<AppState> {
       payload: payload,
       cipherJson: cipherJson,
       updatedAt: now,
+      createdAt: now,
     );
     state = state.copyWith(
       entries: [entry, ...state.entries],
@@ -1211,6 +1223,58 @@ class AppSession extends Notifier<AppState> {
     );
     await _refreshMarks();
     _kickFlush(); // 本地先行：推云交给后台冲正（§2.3）
+  }
+
+  /// 编辑评论（晨 19 §5.2）：评论内嵌载荷（契约无独立评论接口）→ 重建载荷走
+  /// 既有 replaceEntry 冲正，本地先行同 addComment。标记：该索引并入
+  /// 「未上云评论内容索引」（_stageLocal 去重合并），冲正成功自动清除。
+  Future<void> editComment(DiaryEntry entry, int index, String text) async {
+    final now = DateTime.now();
+    final old = entry.payload.comments[index];
+    final payload = entry.payload.copyWithComments([
+      for (final (i, c) in entry.payload.comments.indexed)
+        if (i == index)
+          EntryComment(who: old.who, text: text, time: old.time)
+        else
+          c,
+    ]);
+    final updated = entry.copyWith(payload: payload, updatedAt: now);
+    await _stageLocal(updated,
+        pendingMark: (textEdited: false, newCommentIndex: index));
+    _replaceLocal(updated);
+    state = state.copyWith(toast: '评论已修改');
+    await _refreshMarks();
+    _kickFlush();
+  }
+
+  /// 删除评论（晨 19 §5.2）：同上重建载荷；标记重排——旧 meta 移除该索引、
+  /// 其后整体 -1（评论行号前移，标记必须跟着移位，replaceMeta 整体替换）。
+  /// 删除本身不加标（评论已从界面消失，同条目删除先例）。
+  Future<void> deleteComment(DiaryEntry entry, int index) async {
+    final now = DateTime.now();
+    final payload = entry.payload.copyWithComments([
+      for (final (i, c) in entry.payload.comments.indexed)
+        if (i != index) c,
+    ]);
+    final updated = entry.copyWith(payload: payload, updatedAt: now);
+    if (!_demo) {
+      final row = await _findRow(entry.localId);
+      final meta = parsePendingMeta(row?.pendingMeta);
+      await _stageLocal(
+        updated,
+        replaceMeta: (
+          text: meta.text,
+          comments: [
+            for (final v in meta.comments)
+              if (v != index) (v > index ? v - 1 : v),
+          ],
+        ),
+      );
+    }
+    _replaceLocal(updated);
+    state = state.copyWith(toast: '评论已删除');
+    await _refreshMarks();
+    _kickFlush();
   }
 
   Future<void> deleteEntry(DiaryEntry entry) async {
@@ -1331,9 +1395,12 @@ class AppSession extends Notifier<AppState> {
   /// 本地先行落库（§2.3 统一路径）：加密 → 暂存媒体重置 → 按 serverId 决定
   /// syncState（null→1 待新建 / 非 null→2 待替换）+ 合并待同步标记。推云交给
   /// 后台冲正（_kickFlush）或手动刷新（flushNow/syncNow），本方法绝不触网。
+  /// [replaceMeta] 非空时整体替换标记（晨 19 §5.2 评论删除重排：合并语义不成立
+  /// ——被删下标必须移除且其后前移，不能与旧集合并集）。
   Future<void> _stageLocal(DiaryEntry entry,
       {List<db.PendingMediaItem> pendingMedia = const [],
-      ({bool textEdited, int? newCommentIndex})? pendingMark}) async {
+      ({bool textEdited, int? newCommentIndex})? pendingMark,
+      ({bool text, List<int> comments})? replaceMeta}) async {
     if (_demo) return;
     final s = _session!;
     final cek = randomBytes(32);
@@ -1342,17 +1409,21 @@ class AppSession extends Notifier<AppState> {
       s.publicKey,
       cek: cek,
     );
-    // 旧标记合并基础（离线窗口内多次修改 → 标记并集）
+    // 旧标记合并基础（离线窗口内多次修改 → 标记并集；Set 去重——编辑并入
+    // 已在集合中的下标时不产生重复，晨 19 §5.2）
     final row = await _findRow(entry.localId);
     final old = parsePendingMeta(row?.pendingMeta);
     final mergedMeta = encodePendingMeta(
       old.text || (pendingMark?.textEdited ?? false),
-      [
+      {
         ...old.comments,
         if (pendingMark?.newCommentIndex != null)
           pendingMark!.newCommentIndex!,
-      ],
+      }.toList(),
     );
+    final metaToWrite = replaceMeta != null
+        ? encodePendingMeta(replaceMeta.text, replaceMeta.comments)
+        : mergedMeta;
     // 暂存媒体按本次编辑重置（冲正时载荷重建引用，避免重复上传）
     await _db!.deletePendingMediaFor(entry.localId);
     for (final m in pendingMedia) {
@@ -1365,7 +1436,7 @@ class AppSession extends Notifier<AppState> {
       cipherJson: cipherJson,
       updatedAtMs: entry.updatedAt.millisecondsSinceEpoch,
       syncState: entry.serverId == null ? 1 : 2,
-      pendingMeta: mergedMeta,
+      pendingMeta: metaToWrite,
     );
   }
 

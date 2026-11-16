@@ -14,6 +14,9 @@ class Entries extends Table {
   TextColumn get payloadJson => text()(); // 载荷明文（本地索引授权存）
   TextColumn get cipherJson => text().nullable()(); // Envelope JSON
   IntColumn get updatedAtMs => integer()();
+  // 创建时刻（晨 19 §5.8）：publish 写入一次，编辑/评论/冲正一律 absent 保留原值
+  // ——组内排序 tiebreak「评论不影响排序」的稳定创建序。存量行回填 updatedAtMs。
+  IntColumn get createdAtMs => integer().withDefault(const Constant(0))();
   BoolColumn get deleted => boolean().withDefault(const Constant(false))();
   // 同步状态（离线队列，2026-11-16）：0=已同步 1=待新建 2=待替换 3=待删除。
   // 非 0 行是本地未上云的最终态，拉取同步必须跳过（防云端旧密文覆盖本地改动）。
@@ -53,7 +56,7 @@ class AppDb extends _$AppDb {
   AppDb(super.e);
 
   @override
-  int get schemaVersion => 3;
+  int get schemaVersion => 4;
 
   @override
   MigrationStrategy get migration => MigrationStrategy(
@@ -66,6 +69,13 @@ class AppDb extends _$AppDb {
           // v3（晨 15 待同步标记）：条目加 pendingMeta 列
           if (from < 3) {
             await m.addColumn(entries, entries.pendingMeta);
+          }
+          // v4（晨 19 §5.8 创建序）：组内排序 tiebreak 用创建序（评论不影响）；
+          // 存量行回填 = updatedAtMs（无更早的创建时刻可考）
+          if (from < 4) {
+            await m.addColumn(entries, entries.createdAtMs);
+            await customStatement(
+                'UPDATE entries SET createdAtMs = updatedAtMs WHERE createdAtMs = 0');
           }
         },
       );
@@ -191,6 +201,10 @@ class MemoryLocalStore implements LocalStore {
       payloadJson: c.payloadJson.value,
       cipherJson: c.cipherJson.present ? c.cipherJson.value : null,
       updatedAtMs: c.updatedAtMs.value,
+      // absent 保留旧值（创建序不可覆盖，晨 19 §5.8）；新行 absent 落默认 0
+      createdAtMs: c.createdAtMs.present
+          ? c.createdAtMs.value
+          : (_entries[c.localId.value]?.createdAtMs ?? 0),
       deleted: c.deleted.present ? c.deleted.value : false,
       syncState: c.syncState.present ? c.syncState.value : 0,
       pendingMeta: c.pendingMeta.present ? c.pendingMeta.value : '',

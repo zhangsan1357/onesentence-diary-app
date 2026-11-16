@@ -104,11 +104,25 @@ class EntryPayload {
           const [],
     );
   }
+
+  /// 仅替换评论列表重建载荷（晨 19 §5.2：评论内嵌载荷，编辑/删除 = 重建走既有
+  /// replaceEntry 冲正，契约无独立评论接口）。
+  EntryPayload copyWithComments(List<EntryComment> comments) => EntryPayload(
+        v: v,
+        text: text,
+        time: time,
+        mood: mood,
+        tags: tags,
+        media: media,
+        comments: comments,
+      );
 }
 
 /// 待同步标记 meta（库行 pendingMeta 列的 JSON，2026-11-16 晨 15）：
-/// {"t":true,"c":[3,4]} → (正文/心情/标签有离线改动, 离线新增评论下标)。
-/// 评论 append-only → 下标稳定；冲正成功即清空。坏 JSON 按无标记处理。
+/// {"t":true,"c":[3,4]} → (正文/心情/标签有离线改动, 未上云评论内容下标)。
+/// 晨 19 §5.2 扩义：c 从「新增评论下标」扩为「未上云评论内容索引」——编辑并入
+/// （去重），删除时移除并把其后下标整体 -1（行号前移标记跟着移位）。
+/// 冲正成功即清空。坏 JSON 按无标记处理。
 ({bool text, List<int> comments}) parsePendingMeta(String? s) {
   if (s == null || s.isEmpty) return (text: false, comments: const []);
   try {
@@ -139,6 +153,7 @@ class DiaryEntry {
   final EntryPayload payload;
   final String? cipherJson; // Envelope 序列化 JSON（null=未落库）
   final DateTime updatedAt;
+  final DateTime? createdAt; // 创建时刻（晨 19 §5.8）：null=未知（demo/测试，兜底 updatedAt）
   final bool deleted;
   final String? avatarUrl; // 后端 EntryVO.avatar 链接（客户端只消费不拼装；demo/评论用同款模板）
   // 待同步标记（显示层 * 前缀的唯一依据，来自库行 pendingMeta；冲正/推云成功即清）
@@ -152,6 +167,7 @@ class DiaryEntry {
     required this.payload,
     required this.cipherJson,
     required this.updatedAt,
+    this.createdAt, // 创建时刻（晨 19 §5.8）：null=未知（回落 updatedAt 兜底）
     this.deleted = false,
     this.avatarUrl,
     this.textPending = false,
@@ -165,6 +181,7 @@ class DiaryEntry {
     EntryPayload? payload,
     String? cipherJson,
     DateTime? updatedAt,
+    DateTime? createdAt,
     bool? deleted,
     String? avatarUrl,
     bool? textPending,
@@ -177,6 +194,7 @@ class DiaryEntry {
         payload: payload ?? this.payload,
         cipherJson: cipherJson ?? this.cipherJson,
         updatedAt: updatedAt ?? this.updatedAt,
+        createdAt: createdAt ?? this.createdAt,
         deleted: deleted ?? this.deleted,
         avatarUrl: avatarUrl ?? this.avatarUrl,
         textPending: textPending ?? this.textPending,
@@ -190,9 +208,11 @@ class DiaryEntry {
       );
 }
 
-/// 天分组：按日期聚合、天序倒序；组内按条目时间倒序（HH:mm 字典序即时间序），
-/// 同时间按更新时间倒序（晨 17 §4.2）——组内顺序与库行序/内存插序解耦，任何
-/// 重建路径（发布即现/同步全量重建）结果一致：最新在最上。
+/// 天分组：按日期聚合、天序倒序（显式按日期串排序，评论顶不动天序）；组内按
+/// 条目时间**顺序（升序，写作先后：早→晚，晨 19 §5.8 用户拍板，替代晨 17 §4.2
+/// 的倒序）**，同分钟并列按创建序 createdAt（创建后不可变 → 评论/编辑都不动序；
+/// 未知回落 updatedAt），末级 updatedAt 兜底保证全序确定——组内顺序与库行序/
+/// 内存插序解耦，任何重建路径（发布即现/同步全量重建）结果一致。
 List<MapEntry<String, List<DiaryEntry>>> groupByDay(List<DiaryEntry> entries) {
   final map = <String, List<DiaryEntry>>{};
   for (final e in entries) {
@@ -206,9 +226,12 @@ List<MapEntry<String, List<DiaryEntry>>> groupByDay(List<DiaryEntry> entries) {
           k,
           map[k]!
             ..sort((a, b) {
-              final byTime = b.payload.time.compareTo(a.payload.time);
+              final byTime = a.payload.time.compareTo(b.payload.time);
               if (byTime != 0) return byTime;
-              return b.updatedAt.compareTo(a.updatedAt);
+              final byCreated =
+                  (a.createdAt ?? a.updatedAt).compareTo(b.createdAt ?? b.updatedAt);
+              if (byCreated != 0) return byCreated;
+              return a.updatedAt.compareTo(b.updatedAt);
             })),
   ];
 }

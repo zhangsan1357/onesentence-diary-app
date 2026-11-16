@@ -6,7 +6,9 @@
 // 标准格式 yyyy-MM-dd HH:mm。
 // 晨 17：头像调回原版 24（d776648）；发送后键盘收起（§4.6）；未发送输入
 // 走会话层草稿缓存（§4.12）；长按评论区不再误触条目编辑（§4.8 手势吸收）。
+import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart' show Clipboard, ClipboardData;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 // StateProvider 在 Riverpod 3 收进 legacy（一个可变 int 的最简载体）
 import 'package:flutter_riverpod/legacy.dart' show StateProvider;
@@ -33,6 +35,8 @@ class CommentsView extends ConsumerStatefulWidget {
 
 class _CommentsViewState extends ConsumerState<CommentsView> {
   final _input = TextEditingController();
+  int? _editingIndex; // 行内编辑中的评论下标（晨 19 §5.2）
+  final _editCtrl = TextEditingController();
 
   /// 草稿键：按条目隔离（§4.12），addComment 本地落库成功即清。
   String get _draftKey => 'cmt.${widget.entry.localId}';
@@ -55,6 +59,7 @@ class _CommentsViewState extends ConsumerState<CommentsView> {
   @override
   void dispose() {
     _input.dispose();
+    _editCtrl.dispose();
     super.dispose();
   }
 
@@ -90,40 +95,81 @@ class _CommentsViewState extends ConsumerState<CommentsView> {
                   style: TextStyle(fontSize: 12, color: Tokens.label3(b))),
             ),
           for (final (i, c) in comments.indexed)
-            Padding(
-              padding: const EdgeInsets.symmetric(vertical: 5),
-              child: Row(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  AnimalAvatar(
-                      seed: '$salt|${c.who}|${c.time}|${c.text}', size: 24),
-                  const SizedBox(width: 8),
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        // 只显示头像+内容（2026-11-15 用户拍板去掉「我/她」署名）
-                        // 待同步标记（* 指针，晨 15）：离线新增的评论按库行 meta 标注
-                        Text.rich(
-                          TextSpan(
-                            style: TextStyle(
-                                fontSize: 13,
-                                height: 1.5,
-                                color: Tokens.label(b)),
-                            children: [
-                              ...pendingMark(
-                                  widget.entry.pendingComments.contains(i), b),
-                              TextSpan(text: c.text),
-                            ],
-                          ),
-                        ),
-                        Text(_fmtTime(c),
-                            style: TextStyle(
-                                fontSize: 10, color: Tokens.label3(b))),
-                      ],
+            GestureDetector(
+              // 长按菜单（晨 19 §5.2，§4.8 吸收层在外不变）；编辑中不再弹菜单
+              onLongPress: _editingIndex == i ? null : () => _showMenu(i, c),
+              child: Padding(
+                padding: const EdgeInsets.symmetric(vertical: 5),
+                child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    AnimalAvatar(
+                        seed: '$salt|${c.who}|${c.time}|${c.text}', size: 24),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          if (_editingIndex == i) ...[
+                            TextField(
+                              controller: _editCtrl,
+                              autofocus: true,
+                              style:
+                                  TextStyle(fontSize: 13, color: Tokens.label(b)),
+                              decoration: InputDecoration(
+                                isDense: true,
+                                filled: true,
+                                fillColor: Tokens.fill(b),
+                                contentPadding: const EdgeInsets.symmetric(
+                                    horizontal: 11, vertical: 7),
+                                border: OutlineInputBorder(
+                                  borderRadius: BorderRadius.circular(12),
+                                  borderSide: BorderSide.none,
+                                ),
+                              ),
+                              onSubmitted: (_) => _saveEdit(i),
+                            ),
+                            Row(
+                              mainAxisAlignment: MainAxisAlignment.end,
+                              children: [
+                                TextButton(
+                                  onPressed: () =>
+                                      setState(() => _editingIndex = null),
+                                  child: const Text('取消'),
+                                ),
+                                TextButton(
+                                  onPressed: () => _saveEdit(i),
+                                  child: const Text('保存'),
+                                ),
+                              ],
+                            ),
+                          ] else ...[
+                            // 只显示头像+内容（2026-11-15 用户拍板去掉「我/她」署名）
+                            // 待同步标记（* 指针，晨 15）：未上云评论内容（新增/编辑，
+                            // 晨 19 §5.2 扩义）按库行 meta 标注
+                            Text.rich(
+                              TextSpan(
+                                style: TextStyle(
+                                    fontSize: 13,
+                                    height: 1.5,
+                                    color: Tokens.label(b)),
+                                children: [
+                                  ...pendingMark(
+                                      widget.entry.pendingComments.contains(i),
+                                      b),
+                                  TextSpan(text: c.text),
+                                ],
+                              ),
+                            ),
+                            Text(_fmtTime(c),
+                                style: TextStyle(
+                                    fontSize: 10, color: Tokens.label3(b))),
+                          ],
+                        ],
+                      ),
                     ),
-                  ),
-                ],
+                  ],
+                ),
               ),
             ),
           Row(
@@ -180,6 +226,93 @@ class _CommentsViewState extends ConsumerState<CommentsView> {
   /// 存量只有 HH:mm，用条目日期补全。
   String _fmtTime(EntryComment c) =>
       c.time.length > 5 ? c.time : '${widget.entry.date} ${c.time}';
+
+  /// 长按菜单（晨 19 §5.2）：复制所有评论可看；编辑/删除仅自己的（who=='我'）。
+  void _showMenu(int i, EntryComment c) {
+    showCupertinoModalPopup<void>(
+      context: context,
+      builder: (ctx) => CupertinoActionSheet(
+        actions: [
+          CupertinoActionSheetAction(
+            onPressed: () {
+              Navigator.pop(ctx);
+              Clipboard.setData(ClipboardData(text: c.text));
+              _toast('已复制');
+            },
+            child: const Text('复制'),
+          ),
+          if (c.who == '我') ...[
+            CupertinoActionSheetAction(
+              onPressed: () {
+                Navigator.pop(ctx);
+                setState(() {
+                  _editingIndex = i;
+                  _editCtrl.text = c.text;
+                });
+              },
+              child: const Text('编辑'),
+            ),
+            CupertinoActionSheetAction(
+              onPressed: () {
+                Navigator.pop(ctx);
+                _confirmDelete(i);
+              },
+              isDestructiveAction: true,
+              child: const Text('删除'),
+            ),
+          ],
+        ],
+        cancelButton: CupertinoActionSheetAction(
+          onPressed: () => Navigator.pop(ctx),
+          child: const Text('取消'),
+        ),
+      ),
+    );
+  }
+
+  Future<void> _confirmDelete(int i) async {
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('删除评论'),
+        content: const Text('删除后不可恢复，确定删除？'),
+        actions: [
+          TextButton(
+              onPressed: () => Navigator.pop(ctx, false),
+              child: const Text('取消')),
+          TextButton(
+              onPressed: () => Navigator.pop(ctx, true),
+              child: const Text('删除')),
+        ],
+      ),
+    );
+    if (ok != true) return;
+    try {
+      await ref
+          .read(appSessionProvider.notifier)
+          .deleteComment(widget.entry, i);
+    } catch (err) {
+      if (mounted) _toast('删除失败：$err');
+    }
+  }
+
+  Future<void> _saveEdit(int i) async {
+    final v = _editCtrl.text.trim();
+    if (v.isEmpty) return;
+    try {
+      await ref
+          .read(appSessionProvider.notifier)
+          .editComment(widget.entry, i, v);
+      if (mounted) setState(() => _editingIndex = null);
+    } catch (err) {
+      // 失败：编辑框保留，可重试
+      if (mounted) _toast('修改失败：$err');
+    }
+  }
+
+  void _toast(String msg) {
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(msg)));
+  }
 
   Future<void> _send() async {
     final v = _input.text.trim();

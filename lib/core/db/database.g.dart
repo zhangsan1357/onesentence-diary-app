@@ -74,6 +74,18 @@ class $EntriesTable extends Entries with TableInfo<$EntriesTable, Entry> {
     type: DriftSqlType.int,
     requiredDuringInsert: true,
   );
+  static const VerificationMeta _createdAtMsMeta = const VerificationMeta(
+    'createdAtMs',
+  );
+  @override
+  late final GeneratedColumn<int> createdAtMs = GeneratedColumn<int>(
+    'created_at_ms',
+    aliasedName,
+    false,
+    type: DriftSqlType.int,
+    requiredDuringInsert: false,
+    defaultValue: const Constant(0),
+  );
   static const VerificationMeta _deletedMeta = const VerificationMeta(
     'deleted',
   );
@@ -121,6 +133,7 @@ class $EntriesTable extends Entries with TableInfo<$EntriesTable, Entry> {
     payloadJson,
     cipherJson,
     updatedAtMs,
+    createdAtMs,
     deleted,
     syncState,
     pendingMeta,
@@ -187,6 +200,15 @@ class $EntriesTable extends Entries with TableInfo<$EntriesTable, Entry> {
     } else if (isInserting) {
       context.missing(_updatedAtMsMeta);
     }
+    if (data.containsKey('created_at_ms')) {
+      context.handle(
+        _createdAtMsMeta,
+        createdAtMs.isAcceptableOrUnknown(
+          data['created_at_ms']!,
+          _createdAtMsMeta,
+        ),
+      );
+    }
     if (data.containsKey('deleted')) {
       context.handle(
         _deletedMeta,
@@ -241,6 +263,10 @@ class $EntriesTable extends Entries with TableInfo<$EntriesTable, Entry> {
         DriftSqlType.int,
         data['${effectivePrefix}updated_at_ms'],
       )!,
+      createdAtMs: attachedDatabase.typeMapping.read(
+        DriftSqlType.int,
+        data['${effectivePrefix}created_at_ms'],
+      )!,
       deleted: attachedDatabase.typeMapping.read(
         DriftSqlType.bool,
         data['${effectivePrefix}deleted'],
@@ -269,6 +295,7 @@ class Entry extends DataClass implements Insertable<Entry> {
   final String payloadJson;
   final String? cipherJson;
   final int updatedAtMs;
+  final int createdAtMs;
   final bool deleted;
   final int syncState;
   final String pendingMeta;
@@ -279,6 +306,7 @@ class Entry extends DataClass implements Insertable<Entry> {
     required this.payloadJson,
     this.cipherJson,
     required this.updatedAtMs,
+    required this.createdAtMs,
     required this.deleted,
     required this.syncState,
     required this.pendingMeta,
@@ -296,6 +324,7 @@ class Entry extends DataClass implements Insertable<Entry> {
       map['cipher_json'] = Variable<String>(cipherJson);
     }
     map['updated_at_ms'] = Variable<int>(updatedAtMs);
+    map['created_at_ms'] = Variable<int>(createdAtMs);
     map['deleted'] = Variable<bool>(deleted);
     map['sync_state'] = Variable<int>(syncState);
     map['pending_meta'] = Variable<String>(pendingMeta);
@@ -314,6 +343,7 @@ class Entry extends DataClass implements Insertable<Entry> {
           ? const Value.absent()
           : Value(cipherJson),
       updatedAtMs: Value(updatedAtMs),
+      createdAtMs: Value(createdAtMs),
       deleted: Value(deleted),
       syncState: Value(syncState),
       pendingMeta: Value(pendingMeta),
@@ -332,6 +362,7 @@ class Entry extends DataClass implements Insertable<Entry> {
       payloadJson: serializer.fromJson<String>(json['payloadJson']),
       cipherJson: serializer.fromJson<String?>(json['cipherJson']),
       updatedAtMs: serializer.fromJson<int>(json['updatedAtMs']),
+      createdAtMs: serializer.fromJson<int>(json['createdAtMs']),
       deleted: serializer.fromJson<bool>(json['deleted']),
       syncState: serializer.fromJson<int>(json['syncState']),
       pendingMeta: serializer.fromJson<String>(json['pendingMeta']),
@@ -347,6 +378,7 @@ class Entry extends DataClass implements Insertable<Entry> {
       'payloadJson': serializer.toJson<String>(payloadJson),
       'cipherJson': serializer.toJson<String?>(cipherJson),
       'updatedAtMs': serializer.toJson<int>(updatedAtMs),
+      'createdAtMs': serializer.toJson<int>(createdAtMs),
       'deleted': serializer.toJson<bool>(deleted),
       'syncState': serializer.toJson<int>(syncState),
       'pendingMeta': serializer.toJson<String>(pendingMeta),
@@ -360,6 +392,7 @@ class Entry extends DataClass implements Insertable<Entry> {
     String? payloadJson,
     Value<String?> cipherJson = const Value.absent(),
     int? updatedAtMs,
+    int? createdAtMs,
     bool? deleted,
     int? syncState,
     String? pendingMeta,
@@ -370,6 +403,7 @@ class Entry extends DataClass implements Insertable<Entry> {
     payloadJson: payloadJson ?? this.payloadJson,
     cipherJson: cipherJson.present ? cipherJson.value : this.cipherJson,
     updatedAtMs: updatedAtMs ?? this.updatedAtMs,
+    createdAtMs: createdAtMs ?? this.createdAtMs,
     deleted: deleted ?? this.deleted,
     syncState: syncState ?? this.syncState,
     pendingMeta: pendingMeta ?? this.pendingMeta,
@@ -388,6 +422,9 @@ class Entry extends DataClass implements Insertable<Entry> {
       updatedAtMs: data.updatedAtMs.present
           ? data.updatedAtMs.value
           : this.updatedAtMs,
+      createdAtMs: data.createdAtMs.present
+          ? data.createdAtMs.value
+          : this.createdAtMs,
       deleted: data.deleted.present ? data.deleted.value : this.deleted,
       syncState: data.syncState.present ? data.syncState.value : this.syncState,
       pendingMeta: data.pendingMeta.present
@@ -405,6 +442,7 @@ class Entry extends DataClass implements Insertable<Entry> {
           ..write('payloadJson: $payloadJson, ')
           ..write('cipherJson: $cipherJson, ')
           ..write('updatedAtMs: $updatedAtMs, ')
+          ..write('createdAtMs: $createdAtMs, ')
           ..write('deleted: $deleted, ')
           ..write('syncState: $syncState, ')
           ..write('pendingMeta: $pendingMeta')
@@ -420,6 +458,7 @@ class Entry extends DataClass implements Insertable<Entry> {
     payloadJson,
     cipherJson,
     updatedAtMs,
+    createdAtMs,
     deleted,
     syncState,
     pendingMeta,
@@ -434,6 +473,7 @@ class Entry extends DataClass implements Insertable<Entry> {
           other.payloadJson == this.payloadJson &&
           other.cipherJson == this.cipherJson &&
           other.updatedAtMs == this.updatedAtMs &&
+          other.createdAtMs == this.createdAtMs &&
           other.deleted == this.deleted &&
           other.syncState == this.syncState &&
           other.pendingMeta == this.pendingMeta);
@@ -446,6 +486,7 @@ class EntriesCompanion extends UpdateCompanion<Entry> {
   final Value<String> payloadJson;
   final Value<String?> cipherJson;
   final Value<int> updatedAtMs;
+  final Value<int> createdAtMs;
   final Value<bool> deleted;
   final Value<int> syncState;
   final Value<String> pendingMeta;
@@ -457,6 +498,7 @@ class EntriesCompanion extends UpdateCompanion<Entry> {
     this.payloadJson = const Value.absent(),
     this.cipherJson = const Value.absent(),
     this.updatedAtMs = const Value.absent(),
+    this.createdAtMs = const Value.absent(),
     this.deleted = const Value.absent(),
     this.syncState = const Value.absent(),
     this.pendingMeta = const Value.absent(),
@@ -469,6 +511,7 @@ class EntriesCompanion extends UpdateCompanion<Entry> {
     required String payloadJson,
     this.cipherJson = const Value.absent(),
     required int updatedAtMs,
+    this.createdAtMs = const Value.absent(),
     this.deleted = const Value.absent(),
     this.syncState = const Value.absent(),
     this.pendingMeta = const Value.absent(),
@@ -484,6 +527,7 @@ class EntriesCompanion extends UpdateCompanion<Entry> {
     Expression<String>? payloadJson,
     Expression<String>? cipherJson,
     Expression<int>? updatedAtMs,
+    Expression<int>? createdAtMs,
     Expression<bool>? deleted,
     Expression<int>? syncState,
     Expression<String>? pendingMeta,
@@ -496,6 +540,7 @@ class EntriesCompanion extends UpdateCompanion<Entry> {
       if (payloadJson != null) 'payload_json': payloadJson,
       if (cipherJson != null) 'cipher_json': cipherJson,
       if (updatedAtMs != null) 'updated_at_ms': updatedAtMs,
+      if (createdAtMs != null) 'created_at_ms': createdAtMs,
       if (deleted != null) 'deleted': deleted,
       if (syncState != null) 'sync_state': syncState,
       if (pendingMeta != null) 'pending_meta': pendingMeta,
@@ -510,6 +555,7 @@ class EntriesCompanion extends UpdateCompanion<Entry> {
     Value<String>? payloadJson,
     Value<String?>? cipherJson,
     Value<int>? updatedAtMs,
+    Value<int>? createdAtMs,
     Value<bool>? deleted,
     Value<int>? syncState,
     Value<String>? pendingMeta,
@@ -522,6 +568,7 @@ class EntriesCompanion extends UpdateCompanion<Entry> {
       payloadJson: payloadJson ?? this.payloadJson,
       cipherJson: cipherJson ?? this.cipherJson,
       updatedAtMs: updatedAtMs ?? this.updatedAtMs,
+      createdAtMs: createdAtMs ?? this.createdAtMs,
       deleted: deleted ?? this.deleted,
       syncState: syncState ?? this.syncState,
       pendingMeta: pendingMeta ?? this.pendingMeta,
@@ -550,6 +597,9 @@ class EntriesCompanion extends UpdateCompanion<Entry> {
     if (updatedAtMs.present) {
       map['updated_at_ms'] = Variable<int>(updatedAtMs.value);
     }
+    if (createdAtMs.present) {
+      map['created_at_ms'] = Variable<int>(createdAtMs.value);
+    }
     if (deleted.present) {
       map['deleted'] = Variable<bool>(deleted.value);
     }
@@ -574,6 +624,7 @@ class EntriesCompanion extends UpdateCompanion<Entry> {
           ..write('payloadJson: $payloadJson, ')
           ..write('cipherJson: $cipherJson, ')
           ..write('updatedAtMs: $updatedAtMs, ')
+          ..write('createdAtMs: $createdAtMs, ')
           ..write('deleted: $deleted, ')
           ..write('syncState: $syncState, ')
           ..write('pendingMeta: $pendingMeta, ')
@@ -1212,6 +1263,7 @@ typedef $$EntriesTableCreateCompanionBuilder =
       required String payloadJson,
       Value<String?> cipherJson,
       required int updatedAtMs,
+      Value<int> createdAtMs,
       Value<bool> deleted,
       Value<int> syncState,
       Value<String> pendingMeta,
@@ -1225,6 +1277,7 @@ typedef $$EntriesTableUpdateCompanionBuilder =
       Value<String> payloadJson,
       Value<String?> cipherJson,
       Value<int> updatedAtMs,
+      Value<int> createdAtMs,
       Value<bool> deleted,
       Value<int> syncState,
       Value<String> pendingMeta,
@@ -1266,6 +1319,11 @@ class $$EntriesTableFilterComposer extends Composer<_$AppDb, $EntriesTable> {
 
   ColumnFilters<int> get updatedAtMs => $composableBuilder(
     column: $table.updatedAtMs,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<int> get createdAtMs => $composableBuilder(
+    column: $table.createdAtMs,
     builder: (column) => ColumnFilters(column),
   );
 
@@ -1323,6 +1381,11 @@ class $$EntriesTableOrderingComposer extends Composer<_$AppDb, $EntriesTable> {
     builder: (column) => ColumnOrderings(column),
   );
 
+  ColumnOrderings<int> get createdAtMs => $composableBuilder(
+    column: $table.createdAtMs,
+    builder: (column) => ColumnOrderings(column),
+  );
+
   ColumnOrderings<bool> get deleted => $composableBuilder(
     column: $table.deleted,
     builder: (column) => ColumnOrderings(column),
@@ -1372,6 +1435,11 @@ class $$EntriesTableAnnotationComposer
     builder: (column) => column,
   );
 
+  GeneratedColumn<int> get createdAtMs => $composableBuilder(
+    column: $table.createdAtMs,
+    builder: (column) => column,
+  );
+
   GeneratedColumn<bool> get deleted =>
       $composableBuilder(column: $table.deleted, builder: (column) => column);
 
@@ -1418,6 +1486,7 @@ class $$EntriesTableTableManager
                 Value<String> payloadJson = const Value.absent(),
                 Value<String?> cipherJson = const Value.absent(),
                 Value<int> updatedAtMs = const Value.absent(),
+                Value<int> createdAtMs = const Value.absent(),
                 Value<bool> deleted = const Value.absent(),
                 Value<int> syncState = const Value.absent(),
                 Value<String> pendingMeta = const Value.absent(),
@@ -1429,6 +1498,7 @@ class $$EntriesTableTableManager
                 payloadJson: payloadJson,
                 cipherJson: cipherJson,
                 updatedAtMs: updatedAtMs,
+                createdAtMs: createdAtMs,
                 deleted: deleted,
                 syncState: syncState,
                 pendingMeta: pendingMeta,
@@ -1442,6 +1512,7 @@ class $$EntriesTableTableManager
                 required String payloadJson,
                 Value<String?> cipherJson = const Value.absent(),
                 required int updatedAtMs,
+                Value<int> createdAtMs = const Value.absent(),
                 Value<bool> deleted = const Value.absent(),
                 Value<int> syncState = const Value.absent(),
                 Value<String> pendingMeta = const Value.absent(),
@@ -1453,6 +1524,7 @@ class $$EntriesTableTableManager
                 payloadJson: payloadJson,
                 cipherJson: cipherJson,
                 updatedAtMs: updatedAtMs,
+                createdAtMs: createdAtMs,
                 deleted: deleted,
                 syncState: syncState,
                 pendingMeta: pendingMeta,
