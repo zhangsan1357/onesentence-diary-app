@@ -152,12 +152,6 @@ void main() {
 
   // ---------- widget 级 ----------
 
-  Widget _home(void Function(BuildContext) onOpen) => MaterialApp(
-        home: Scaffold(
-          body: Builder(builder: (context) => Center(child: Text('home'))),
-        ),
-      );
-
   testWidgets('查看器：暗底显示 + 索引标题 + 关闭返回', (tester) async {
     final png = Uint8List.fromList(base64Decode(
         'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==')); // 1x1 PNG
