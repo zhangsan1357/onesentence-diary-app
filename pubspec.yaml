@@ -39,6 +39,7 @@ dependencies:
   web: ^1.1.1 # web 端 localStorage KV（真实栈联调）
   flutter_secure_storage: ^11.2.0
   gal: ^3.0.1
+  home_widget: ^0.10.0
 
 # sqlite3 构建钩子默认从 GitHub Releases 下载预编译库（本机 release-assets 域名不可达）。
 # source: system 表示运行时按名查找动态库：

@@ -25,6 +25,7 @@ import '../model/diary_entry.dart';
 import '../repo/demo_data.dart';
 import '../util/avatar_pool.dart';
 import '../util/dates.dart';
+import '../util/widget_snapshot.dart';
 import 'bio_vault.dart';
 import 'crypto_session.dart';
 import 'env_check.dart';
@@ -330,6 +331,7 @@ class AppSession extends Notifier<AppState> {
       final session = sessionFromPlain(ks);
       _session = session;
       _api.otpKey = ks.publicKeyHex;
+      unawaited(_resumeRotateIfAny()); // 换钥中断续跑（§5.4）
       state = state.copyWith(
         ready: true,
         hasKeystore: true,
@@ -399,6 +401,7 @@ class AppSession extends Notifier<AppState> {
     _session = session;
     _api.otpKey = ks.publicKeyHex;
     state = state.copyWith(locked: false);
+    unawaited(_resumeRotateIfAny()); // 换钥中断续跑（§5.4）
     if (!state.lockEnabled && ks.wrapNonceB64.isNotEmpty) {
       // 一次性迁移：口令 keystore → 明文（此后免口令直进）
       await _persistKeystore(plainFromSession(session));
@@ -1058,6 +1061,27 @@ class AppSession extends Notifier<AppState> {
     }
     final pending = rows.where((r) => r.syncState != 0).length;
     _set((s) => s.copyWith(entries: entries, pendingCount: pending));
+    await refreshWidgetSnapshot(); // Widget 快照（§5.5）：数据变化汇聚点
+  }
+
+  // ---------- Widget 数据快照（晨 19 §5.5） ----------
+
+  String? _lastWidgetJson;
+
+  /// 测试注入：null = 走平台门面（io/web 条件导入）。
+  @visibleForTesting
+  Future<void> Function(Map<String, String> values)? debugWidgetWriter;
+
+  /// 内存重建是所有数据变化的汇聚点（发布/冲正/同步/删除）→ 尾部调用；
+  /// 内容不变跳过（比较排除 updatedAtIso——时间戳每次都变），无 App Group
+  /// entitlement 时静默（纯增强）。
+  Future<void> refreshWidgetSnapshot() async {
+    final values = buildWidgetSnapshot(state.entries, DateTime.now());
+    final content = jsonEncode({...values}..remove(kWsUpdatedAt));
+    if (content == _lastWidgetJson) return;
+    _lastWidgetJson = content;
+    final w = debugWidgetWriter ?? saveWidgetSnapshot;
+    await w(values);
   }
 
   Future<void> _upsertLocal({
@@ -1478,6 +1502,172 @@ class AppSession extends Notifier<AppState> {
           .toList(),
     );
   }
+
+  // ---------- 身份变更（晨 19 §5.4，缺口 #7：客户端先行，端点未上线前调用失败不落任何状态） ----------
+
+  /// 改注册名：服务端重键（同 userKey 新 userId）→ keystore.userId 更新落盘 →
+  /// 重新注册换 token。端点失败（含 404 未上线）直接抛给 UI，任何状态都不改。
+  Future<void> renameIdentity(String newUserId) async {
+    if (_demo) throw StateError('演示模式不支持身份变更');
+    final s = _session;
+    if (s == null) throw StateError('未解锁');
+    final name = _checkUserId(newUserId);
+    if (name == s.keystore.userId) return;
+    await _api.rename(name); // 先过服务端：失败即中止，零状态变更
+    final ks = KeystoreData(
+      saltB64: s.keystore.saltB64,
+      wrappedPrivB64: s.keystore.wrappedPrivB64,
+      wrapNonceB64: s.keystore.wrapNonceB64,
+      publicKeyHex: s.keystore.publicKeyHex,
+      deviceNo: s.keystore.deviceNo,
+      userId: name,
+      recoveryCode: s.keystore.recoveryCode,
+    );
+    _session = UnlockedSession(
+        keystore: ks, privateKey: s.privateKey, publicKey: s.publicKey);
+    _api.otpKey = ks.publicKeyHex;
+    await _db!.kvRemove('api.token'); // 强制重新注册（同 userKey 新 userId）
+    await _persistKeystore(ks);
+    await _register();
+    _set((st) => st.copyWith(userId: name, toast: '注册名已更改 · $name'));
+  }
+
+  /// 换 12 词主密钥（缺口 #7）：全量重加密（媒体 CEK 重包裹，blob 免重传）。
+  /// 序（§5.4 修正版，中断安全）：① 新词→新键对 ② keystore 先重写为新身份 +
+  /// 旧私钥 ECIES 暂存（cfg.rotateOld）+ 进度（cfg.rotateDone）③ 逐条目重加密
+  /// replaceEntry（幂等续跑）④ rotate 端点换 userKey 换 token ⑤ 清暂存。
+  /// [passcode]：锁定开启时必传（新私钥按同口令重包裹）。返回新 12 词。
+  Future<String> rotateIdentity({String passcode = ''}) async {
+    if (_demo) throw StateError('演示模式不支持身份变更');
+    final s = _session;
+    if (s == null) throw StateError('未解锁');
+    await syncNow(); // 先冲正：在途暂存媒体引用是旧钥包裹，轮换窗口内不可冲正
+    final newWords = RecoveryWords.generate();
+    final newSess = await sessionFromIdentity(newWords, userId: s.keystore.userId);
+    KeystoreData ks;
+    if (s.keystore.wrapNonceB64.isNotEmpty) {
+      if (passcode.isEmpty) throw ArgumentError('锁定开启：换主密钥需口令');
+      ks = await rekeyKeystore(newSess, passcode);
+    } else {
+      ks = plainFromSession(newSess);
+    }
+    await _persistKeystore(ks); // ② keystore 先重写（中断窗口从此可续跑）
+    await _db!.kvSet(
+        'cfg.rotateOld',
+        b64Encode(
+            await wrapCek(s.privateKey, newSess.publicKey))); // 旧私钥可解包
+    await _db!.kvSet('cfg.rotateDone', '0');
+    _session = newSess;
+    _api.otpKey = ks.publicKeyHex;
+    await _rotateEntries(s.privateKey); // ③ 全量重加密
+    await _rotateRegister(ks); // ④ rotate 端点：换 userKey + 新 token
+    await _clearRotateTemp(); // ⑤
+    await _loadLocalEntries();
+    _set((st) => st.copyWith(toast: '主密钥已更换 · 请立即抄写新恢复词'));
+    return newWords;
+  }
+
+  /// ③ 逐条目重加密：旧私钥解载荷 → 媒体 CEK 旧解新包 → 新公钥整条重加密 →
+  /// replaceEntry（幂等）+ 本地 cipherJson 同步（下次全量拉取比对一致）。只处理
+  /// 已上云未删除条目；[oldPriv] 传入（续跑时从 cfg.rotateOld 解包获得）。
+  Future<void> _rotateEntries(List<int> oldPriv) async {
+    final newSess = _session!;
+    final rows = await _db!.allEntries();
+    final eligible = [
+      for (final r in rows)
+        if (r.serverId != null && !r.deleted && r.cipherJson != null && r.cipherJson!.isNotEmpty) r,
+    ];
+    final doneAt = int.tryParse(await _db!.kvGet('cfg.rotateDone') ?? '') ?? 0;
+    for (var i = doneAt; i < eligible.length; i++) {
+      final r = eligible[i];
+      final payload = EntryPayload.decode(utf8
+          .decode(await Envelope.decrypt(r.cipherJson!, oldPriv)));
+      final media = [
+        for (final m in payload.media)
+          if (m.cekB64.isNotEmpty)
+            MediaRef(
+              id: m.id,
+              kind: m.kind,
+              cekB64: b64Encode(await wrapCek(
+                  await unwrapCek(b64Decode(m.cekB64), oldPriv),
+                  newSess.publicKey)),
+              sec: m.sec,
+            )
+          else
+            m,
+      ];
+      final newPayload = EntryPayload(
+        v: payload.v,
+        text: payload.text,
+        time: payload.time,
+        mood: payload.mood,
+        tags: payload.tags,
+        media: media,
+        comments: payload.comments,
+      );
+      final newCipher = await Envelope.encryptJson(
+        utf8.encode(newPayload.encode()),
+        newSess.publicKey,
+        cek: randomBytes(32),
+      );
+      final parts = jsonDecode(newCipher) as Map<String, dynamic>;
+      await _api.replaceEntry(
+        id: r.serverId!,
+        entryDate: r.entryDate,
+        ciphertext: parts['ciphertext'] as String,
+        nonceContent: parts['nonce_content'] as String,
+        encryptedCek: parts['encrypted_cek'] as String,
+      );
+      await _upsertLocal(
+        localId: r.localId,
+        serverId: r.serverId,
+        date: r.entryDate,
+        cipherJson: newCipher,
+        updatedAtMs: r.updatedAtMs,
+      );
+      await _db!.kvSet('cfg.rotateDone', '${i + 1}'); // 条目级进度
+    }
+  }
+
+  /// ④ rotate 端点：同 userId 换 userKey（服务端原子更新）+ 新 token 落盘。
+  Future<void> _rotateRegister(KeystoreData ks) async {
+    final reg = await _api.rotate(userKeyHex: ks.publicKeyHex);
+    _api.token = reg.token;
+    _api.otpKey = ks.publicKeyHex;
+    await _db!.kvSet('api.token', reg.token);
+    await _db!.kvSet('api.deviceId', '${reg.deviceId}');
+    _set((st) => st.copyWith(serverStatus: '已换钥注册 · 设备#${reg.deviceId}'));
+  }
+
+  Future<void> _clearRotateTemp() async {
+    await _db!.kvRemove('cfg.rotateOld');
+    await _db!.kvRemove('cfg.rotateDone');
+  }
+
+  /// 轮换续跑（中断安全，§5.4）：cfg.rotateOld 存在 = 上次轮换未完 → 用当前
+  /// 会话私钥（= 新身份，keystore 已先重写）解包旧私钥，从进度继续 ③④⑤。
+  /// unlock 与 init 明文恢复后调用；无暂存即静默跳过。
+  Future<void> _resumeRotateIfAny() async {
+    if (_demo || _session == null || _db == null) return;
+    try {
+      final old = await _db!.kvGet('cfg.rotateOld');
+      if (old == null) return;
+      final s = _session!;
+      final oldPriv = await unwrapCek(b64Decode(old), s.privateKey);
+      await _rotateEntries(oldPriv);
+      await _rotateRegister(s.keystore);
+      await _clearRotateTemp();
+      await _loadLocalEntries();
+      _set((st) => st.copyWith(toast: '主密钥轮换已续完 · 请确认恢复词'));
+    } catch (e) {
+      // 续跑失败不阻塞会话：条目保持可解（旧私钥暂存还在），下次解锁再续
+      _set((st) => st.copyWith(syncError: '主密钥轮换续跑失败：$e'));
+    }
+  }
+
+  /// 测试钩子：显式触发续跑（中断场景单测）。
+  @visibleForTesting
+  Future<void> debugResumeRotate() => _resumeRotateIfAny();
 
   // ---------- 设置 ----------
   /// 服务端地址（客户端配置，不区分构建环境）：所有接口调用拼接此地址。

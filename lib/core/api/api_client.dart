@@ -353,4 +353,21 @@ class ApiClient {
   Future<void> notify({required String title, required String message}) async {
     await _post('/api/v1/diary/notify', {'title': title, 'message': message});
   }
+
+  // ---------- 身份变更（晨 19 §5.4，缺口 #7 提案；端点未上线前调用方按 404 展示） ----------
+
+  /// 改注册名：服务端重键数据空间（同 userKey 新 userId）。
+  Future<void> rename(String newUserId) async {
+    await _post('/api/v1/diary/device/rename', {'newUserId': newUserId});
+  }
+
+  /// 换主密钥放行：同 userId 换 userKey（服务端原子更新并重新注册返回新 token）。
+  Future<DeviceRegResult> rotate({required String userKeyHex}) async {
+    final data =
+        await _post('/api/v1/diary/device/rotate', {'userKey': userKeyHex});
+    return DeviceRegResult(
+      token: data['token'] as String,
+      deviceId: (data['deviceId'] as num).toInt(),
+    );
+  }
 }
