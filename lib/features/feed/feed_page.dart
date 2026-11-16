@@ -11,11 +11,13 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../core/model/diary_entry.dart';
 import '../../core/session/app_session.dart';
+import '../../core/util/avatar_pool.dart';
 import '../../core/util/dates.dart';
 import '../../features/compose/compose_page.dart';
 import '../../features/shell/home_shell.dart';
 import '../../features/theme/tokens.dart';
 import '../../widgets/common.dart';
+import '../../widgets/day_card_avatar.dart';
 import '../../widgets/net_avatar.dart';
 import 'comments_view.dart';
 
@@ -548,8 +550,17 @@ class DayCardBody extends ConsumerWidget {
           padding: const EdgeInsets.fromLTRB(14, 13, 14, 4),
           child: Row(
             children: [
-              // 天卡头像 56（晨 17 真机反馈「再大点」；接口图像链路不变 §2.7 v3）
-              NetAvatar(url: entries.first.avatarUrl, size: 56),
+              // 天卡头像 56（晨 17「再大点」）；晨 18 §2.7 v4：池文件命中走本地
+              // 直读（盐|dateKey 随机取格，刷新换新），缺失回落接口链路。
+              Builder(builder: (context) {
+                final pool = ref.watch(avatarPoolProvider);
+                final salt = ref.watch(avatarSaltProvider);
+                return DayCardAvatar(
+                  poolPath: pool.pathFor(avatarPoolIndex('$salt|$dateKey')),
+                  url: entries.first.avatarUrl,
+                  size: 56,
+                );
+              }),
               const Spacer(),
               Column(
                 crossAxisAlignment: CrossAxisAlignment.end,

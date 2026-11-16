@@ -252,7 +252,16 @@
 7. 测试 **126 项全绿**（新增 15：offline 2——后台冲正失败 toast/在线发布后台回填 serverId；draft_config 6——推生效色/拉补缺+同名本地优先/删除名单防复活/心情补缺/草稿往返防抖/注销清草稿；payload 2——组内时间倒序/同时间按更新倒序；keyboard 交互 5——长按评论不误触编辑/发送收键盘+草稿清除/评论草稿恢复/dataRev 收评论/点空白收键盘+compose 草稿恢复）。analyze 零告警。
 8. **踩坑**：①testWidgets 是 FakeAsync 区——`Future.delayed` 永不推进（挂死 300s），必须 `tester.pump` 推假时钟；②`createIdentity→unawaited(_loadHolidays)` 的资产加载 `.timeout(2s)` Timer 在收尾被判 pending——bootstrap 后 pump 3s 放掉；③unfocus 断言不能是 `primaryFocus == null`（回落根 scope），用 EditableText 的 focusNode.hasFocus 翻转；④`tagColorName()` 只哈希不查覆盖表，推双写生效色要 `tagColorOverrides[tag] ?? tagColorName(tag)`。
 
-## 测试清单（`flutter test` 126 项全绿；后端未启动时 live 14 项自动 SKIP）
+## 2026-11-17（晨 18）头像预下载池落地：枚举改后端同款随机 QQ 邮箱逻辑（用户拍板「不要自定义种子」）
+
+1. **设计修订（`30bd516`，DESIGN §2.7 v3→v4）**：用户重申天卡必用接口图像后拍板池枚举逻辑——**与后端 `AvatarUtil.ofRandomQQ` 完全一致**：随机 QQ 号（`RandomUtil.randomInt(123456789, 987654321, 双闭区间)`）→ `"%s@qq.com"` → md5 → cravatar URL；每格一个号、清单 `seeds.json` 持久化（一次确定永不重生成，避免文件与清单错位）——同一邮箱空间 = 池图像与接口图像同源同分布。黄金向量：md5(`798969707@qq.com`)=`dedf817b2bf150463aca1693856ad6e8`（后端 main 示例号）。断点续传简化为**文件即进度**（免 KV 位图）。
+2. **池服务三件套**（条件导入，web 无 dart:io → 池禁用恒 NetAvatar）：[avatar_pool.dart](lib/core/util/avatar_pool.dart) 门面（+`avatarPoolProvider` 单例、onDispose stop）+ [avatar_pool_core.dart](lib/core/util/avatar_pool_core.dart) 平台无关核心（常量/`avatarPoolUrl`=md5→cn.cravatar.com 直连+`?s=184`/`avatarPoolIndex`=stableHash(盐|dateKey) 非负取模——与评论头像/标签色同源哈希）+ [avatar_pool_io.dart](lib/core/util/avatar_pool_io.dart) IO 实现（IoAvatarPool，fetch/isWifi/resolveDir/批量参数全可注入供测试）。新增依赖 `connectivity_plus ^6.1.4`（NWPathMonitor 封装；Wi-Fi/以太网放行，检测异常保守放行不阻塞）。
+3. **后台静默管线**：`init()` 启动一次（无需身份、锁屏下可填；单飞 guard）；并发 3 / 批 20 / 批间隔 2~5s 抖动 / 单张超时 8s / **多轮全池巡检**——失败项下一轮重试、≤3 次封顶、一整轮无可做之事即收束（遗留项下次启动再巡检）；非 Wi-Fi 批间等待 60s 重查（仅 Wi-Fi 填充，1w 张 ÷ 3 并发 ≈ 55~90 分钟累计）；Application Support `avatarpool/av-<n>.png` tmp+rename 原子写（进程被杀不留半张、无状态损坏）。
+4. **渲染接入**：[day_card_avatar.dart](lib/widgets/day_card_avatar.dart)（IO/Web 条件实现）——池文件命中 `Image.file`（ClipOval 同视觉、cacheWidth=56×3 与 s=184 源图 1:1 解码）本地直读零等待；缺失回落 `NetAvatar`（EntryVO.avatar + 方案 D 预取不变）。[feed_page.dart](lib/features/feed/feed_page.dart) DayCardBody 按 `avatarPoolIndex('$salt|$dateKey')` 取格：盐随刷新重掷 → 每轮换新、同周期稳定（与「刷新后新头像」拍板一致）。
+5. 测试 **134 项全绿**（新增 8，`test/features/avatar_pool_test.dart`）：md5 黄金向量逐字钉死、indexFor 确定性+范围、种子生成（数量/唯一/双闭区间/持久化复用）、批次下载（全落盘/幂等不再拉/失败重试封顶/原子写不落半张）、并发上限峰值=3、Wi-Fi 门（非 Wi-Fi 零拉取+stop 退出）、pathFor 边界、渲染两分支。analyze 零告警。
+6. **踩坑**：①门面文件只 `export` 条件实现时自身作用域没有 `createAvatarPool`（`import`+`export` 双写）；②`prefer_initializing_formals` 告警——注入型构造器的字段与参数同名（公开字段 + 初始化形参 + 默认值指向静态方法）；③重试语义：「≤3 次封顶」必须配**多轮巡检**（单轮内每格只访问一次，计数器无意义），收束条件=整轮零发起。
+
+## 测试清单（`flutter test` 134 项全绿；后端未启动时 live 14 项自动 SKIP）
 
 - **golden 向量 9 项**（`test/core/e2ee/golden_test.dart`，02 §7 固化向量）：Argon2id masterKey、X25519 公钥推导（clamp）、sharedSecret、HKDF encKey、92B EncryptedCEK 字节布局、AES-GCM cipher+tag 布局、完整 JSON fixture 解密、确定性加密复现完整 JSON、随机往返。**一次实现全绿**，Dart 端与 Go 参考实现逐字节互通。
 - **恢复词 7 项**（`test/core/session/recovery_words_test.dart`）：BIP39 黄金向量（熵全 0 短语+seed，Node 互证）、生成多轮校验、抄写错误四类拒绝（换词/缺词/词表外/错序）、空白归一化、hex 判定、**diaryPass 动态口令向量（活后端实测）+窗口边界**。
@@ -270,6 +279,7 @@
 - **双写/草稿 6 项**（`test/features/draft_config_test.dart`，2026-11-16 晨 17）：saveTag 推覆盖优先生效色（同名=更新）；拉取补缺合并+同名本地优先；删除名单防拉取复活；心情种子仅补本地没有的 key；草稿保存/读取往返（loadDraft 先落防抖值）+ 清除；注销清草稿与删除名单。CfgFakeApi 补 config 三端点桩。
 - **组内排序 2 项**（`test/core/model/payload_test.dart` 增补，2026-11-16 晨 17）：乱序输入组内 time 倒序确定性输出；同时间按 updatedAt 倒序。
 - **键盘/评论交互 5 项**（`test/features/keyboard_interactions_test.dart`，2026-11-16 晨 17）：长按评论不误触条目编辑（手势吸收）；评论发送后 focusNode 失焦+输入清空+草稿清除；评论草稿恢复预填；dataRev 自增收起已展开评论（失败路径不收）；compose 草稿恢复+点空白收键盘。FakeAsync 踩坑：pump 推假时钟 + pump 3s 放掉 holidays timeout Timer（见晨 17 §8）。
+- **头像预下载池 8 项**（`test/features/avatar_pool_test.dart`，2026-11-17 晨 18）：md5 黄金向量（798969707@qq.com→dedf817b…，后端 AvatarUtil 示例逐字一致）；indexFor 确定性+范围；种子生成（数量/唯一/双闭区间 123456789~987654321/seeds.json 持久化复用）；批次下载（全落盘/幂等/失败重试封顶/原子写）；并发上限峰值=3；Wi-Fi 门（非 Wi-Fi 零拉取+stop 退出）；pathFor 边界；渲染两分支（池命中 Image.file/缺失回落 NetAvatar）。fetch/isWifi/resolveDir/批量参数全注入。
 - **光晕像素采样 2 项**（`test/features/glow_pixel_test.dart`；深色期望改为可见 Δ≥4 ≤48——用户覆盖原版 0.15）。
 - **live 集成 14 项**（`test/live/integration_live_test.dart`）：原 11 项回归（全程隐式验证 X-Diary-Pass）+ M3-12 动态口令 401 + M3-13 多设备共享 + M3-14 冒名拒绝。**2026-11-14 后端 v4 实测 14/14 全绿**（未启动自动 SKIP）。
 

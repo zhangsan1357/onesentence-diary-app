@@ -23,6 +23,7 @@ import '../holiday/holiday.dart';
 import '../notify/notification_service.dart';
 import '../model/diary_entry.dart';
 import '../repo/demo_data.dart';
+import '../util/avatar_pool.dart';
 import '../util/dates.dart';
 import 'bio_vault.dart';
 import 'crypto_session.dart';
@@ -218,6 +219,10 @@ class AppSession extends Notifier<AppState> {
   Future<void> init() async {
     if (state.ready) return;
     _demo = _resolveDemo();
+
+    // 头像池后台静默填充（晨 18 §2.7 v4）：无需身份、公开素材，锁屏下也可填；
+    // 失败静默（渲染回落接口链路），不阻塞初始化。
+    unawaited(ref.read(avatarPoolProvider).start());
 
     // 同步先用内置种子设置调休（asset/服务端随后异步覆盖），保证首帧数据完整
     final seedHolidays =
