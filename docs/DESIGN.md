@@ -462,6 +462,20 @@ SwiftUI 版本。现状架构已天然友好（逻辑层纯 Dart、UI 全 Cupert
   私钥解包旧私钥 → 从进度继续。续跑挂点 = `unlock()` 与 init 明文恢复分支。
   轮换开始先 `syncNow()`（清空在途队列：暂存媒体引用是旧钥包裹，轮换窗口内冲正会
   造成不可解引用）。
+- **服务端协议注意三条（手册 §5.1/§5.5，会话 A 2026-11-17）**：
+  1. **rotate 调用本身必须用旧钥算 X-Diary-Pass**（鉴权门先于控制器，服务端此刻
+     还是旧钥）——rotateIdentity 流程下 keystore 已先重写，rotate 请求前临时把
+     `api.otpKey` 切回旧公钥 hex，成功后设新钥；失败恢复原值。
+  2. **换钥中断重试：用新钥直接 register（同 userId 同新钥）续接，不要重试
+     rotate**——续跑（_resumeRotateIfAny）在 ③ 完成后走 registerDevice；
+     register 被拒（rotate 从未落服务端的窗口）兜底回退一次 rotate（旧钥口令，
+     此时服务端仍持旧钥才可能成功）。
+  3. **emoji 在 JSON wire 层以 \uXXXX 转义**（非 BMP 字符，标准 JSON）——
+     dart:convert 解析等价，零代码改动（记录）。
+- **mood color 契约修正（§5.9 更正）**：服务端 mood `color` 校验/种子均为
+  **#RRGGBB 六位 hex**（与 saveTag 色名语义不同）——推送侧 colorHex 取低 24 位
+  格式化为 `#RRGGBB`（不再反查色名）；拉取侧 `_moodColorOf` 先解析 hex、兼容
+  色名、兜底灰（服务端种子 #34C759 等不再落到灰色兜底）。
 
 ### 5.5 Widget 数据快照层（设计定稿 + Flutter 数据层；Swift 等 Mac）
 
@@ -580,14 +594,16 @@ SwiftUI 版本。现状架构已天然友好（逻辑层纯 Dart、UI 全 Cupert
    syncNow 成功后拉取（失败静默保留旧值=离线兜底）；me 页总条数/连续天数、回忆页
    连续天数 hero 改为 **服务器优先、本地计算兜底**（stats==null 或 demo 时本地）；
    标签数仍本地（密文内，服务端不可见）。
-4. **身份变更入口维持隐藏（核对修正）**：核对后端源码发现 rename/rotate/
-   upsertMood/deleteMood 已备于 **service 层但 controller 未暴露**（仅 `/stats`
-   上线）——按 §5.4「无端点前不做假 UI」，me 页入口保持隐藏；对话框代码就绪
-   （showRenameIdentityDialog/showRotateIdentityDialog），controller 上线后一次性
-   打开。me 页既有「更换主密钥」行标题澄清为「更换锁定口令」（该功能=重包裹封套
-   不换钥，与 12 词换钥并存需可区分）。
-5. **live 联调扩展（仅 stats，唯一上线端点）**：stats 形状/值断言（建条目后
-   total/streak/heatmap 稀疏）；rename/rotate/mood live 测试待 controller 上线补。
+4. **身份变更入口打开（§5.4 约定端点就绪一次性打开；会话 A 已上线
+   rename/rotate/moods 全部 controller）**：me 页安全组增两行——「更改注册名」（新名
+   校验+强确认「旧名无法再登录」→ renameIdentity）、「更换 12 词主密钥」（强确认→
+   锁定开启时需口令→rotateIdentity→**新 12 词宫格展示 barrierDismissible=false 必点
+   「我已抄写」**）。me 页既有「更换主密钥」行标题澄清为「更换锁定口令」（该功能=
+   重包裹封套不换钥，与 12 词换钥并存需可区分）。
+5. **live 联调扩展 4 项**（`test/live/integration_live_test.dart`，后端在跑才执行）：
+   stats 形状/值断言（建 2 条后 total/streak/heatmap 稀疏+date ASC）、rename（改名→
+   新名重注册同 userKey）、rotate（换 userKey 换 token→新 token 建条目）、
+   saveMood/deleteMood（写入回读+删除后消失）。
 
 **测试映射**：stats_sync_test（解析/syncNow 置位/失败保留/computeStreak 边界 3 类）+
 identity_change_test 不变 + live 4 项。
