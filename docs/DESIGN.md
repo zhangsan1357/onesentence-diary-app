@@ -525,3 +525,32 @@ SwiftUI 版本。现状架构已天然友好（逻辑层纯 Dart、UI 全 Cupert
 - **客户端兜底保留**：即使 #1 落地，客户端 groupByDay 确定性排序保留不删（离线
   条目/本地先行/契约演进解耦），服务端顺序保证是协议层确定性 + 分页正确性的地基，
   不承担客户端排序替代职责（个人日记量级客户端排序成本≈0）。
+
+### 5.9 晨 19 追加（用户拍板）：心情管理服务端同步核查与修正（§4.1 修订）
+
+**核查结论**：心情管理此前**只拉不推**——拉取补缺已有（§4.1 `_syncCfg` → configMoods
+→ 本地没有的 key 并入 customMoods），但：①增/改/删全部只写本地（契约无心情写入
+端点，缺口 #8「moods GET-only」）；②**复活 bug**——服务端来源的心情删除后，下次
+拉取会被重新并入（标签有 `_deletedTags` 删除名单，心情没有对应机制）。
+
+**修正（客户端，本轮）**：
+
+1. **删除名单**：`_deletedMoods` 集合 + KV `cfg.moodDeleted`（cfgKvKeys 增补）——
+   removeMood 记录 moodKey；`_syncCfg` 拉取补缺过滤名单内 key；`_loadCfg` 启动载入；
+   loginIdentity/logout 清空（同 `_deletedTags`）。
+2. **推送先行（#7 同款模式：失败静默留本地，端点上线即自动生效）**：
+   - api_client 增 `saveMood({moodKey, emoji, color})`（镜像 saveTag：同 moodKey=
+     更新幂等）与 `deleteMood(moodKey)`；
+   - addMood / updateMood(自定义) 后 `_pushMood(m)`，removeMood 后
+     `_deleteMoodRemote(key)`——均 unawaited + catchError 静默（同 `_pushTag`，
+     不加定时重试）；
+   - **color 语义**：MoodCfg.colorHex（int）→ 服务端 color（色名）。推送做 hex→色名
+     反查（`tagColorHex` 逆查），无匹配推 ''（服务端按缺省处理）；
+   - **默认 6 心情（happy 等）的显示覆盖不推送**——设备本地显示偏好（与标签色
+     覆盖同语义；契约配置本就按 device 键控，晨 17 记录），服务端只存自定义心情集。
+3. **契约缺口 #8 扩充（转发会话 A）**：心情写入端点 `POST /api/v1/diary/config/moods`
+   `{moodKey, emoji, color}`（同 moodKey 幂等更新）+ `POST /api/v1/diary/config/moods/delete`
+   `{moodKey}`；02 手册 §5 回写。
+
+**测试映射追加**：draft_config_test 扩展——自定义心情推送调用断言（emoji/color 形态）、
+删除名单防复活（删除后拉取不并入、名单 KV 持久化）、推送失败静默（FakeApi 抛错不冒泡）。
