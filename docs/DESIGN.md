@@ -580,13 +580,14 @@ SwiftUI 版本。现状架构已天然友好（逻辑层纯 Dart、UI 全 Cupert
    syncNow 成功后拉取（失败静默保留旧值=离线兜底）；me 页总条数/连续天数、回忆页
    连续天数 hero 改为 **服务器优先、本地计算兜底**（stats==null 或 demo 时本地）；
    标签数仍本地（密文内，服务端不可见）。
-4. **身份变更入口打开（§5.4 约定端点就绪一次性打开）**：me 页安全组增两行——
-   「更改注册名」（新名校验+强确认「旧名无法再登录」→ renameIdentity）、「更换
-   主密钥」（强确认文案→锁定开启时需口令→rotateIdentity→**新 12 词 12 宫格展示
-   强提示抄写**）。
-5. **live 联调扩展**（`test/live/integration_live_test.dart`，后端在跑才执行）：
-   stats 形状/值断言（建条目后 total/streak/heatmap 稀疏）、rename（重注册同
-   userKey）、rotate（换 userKey 换 token）、saveMood/deleteMood（写入回读）。
+4. **身份变更入口维持隐藏（核对修正）**：核对后端源码发现 rename/rotate/
+   upsertMood/deleteMood 已备于 **service 层但 controller 未暴露**（仅 `/stats`
+   上线）——按 §5.4「无端点前不做假 UI」，me 页入口保持隐藏；对话框代码就绪
+   （showRenameIdentityDialog/showRotateIdentityDialog），controller 上线后一次性
+   打开。me 页既有「更换主密钥」行标题澄清为「更换锁定口令」（该功能=重包裹封套
+   不换钥，与 12 词换钥并存需可区分）。
+5. **live 联调扩展（仅 stats，唯一上线端点）**：stats 形状/值断言（建条目后
+   total/streak/heatmap 稀疏）；rename/rotate/mood live 测试待 controller 上线补。
 
 **测试映射**：stats_sync_test（解析/syncNow 置位/失败保留/computeStreak 边界 3 类）+
 identity_change_test 不变 + live 4 项。

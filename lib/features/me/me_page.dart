@@ -19,8 +19,14 @@ class MePage extends ConsumerWidget {
     final state = ref.watch(appSessionProvider);
     final notifier = ref.read(appSessionProvider.notifier);
 
-    final (total, tagCount) = totalAndTags(state.entries);
-    final streak = state.demo ? 23 : computeStreak(state.entries, DateTime.now());
+    final (localTotal, tagCount) = totalAndTags(state.entries);
+    // 服务端统计优先（§5.10），失败/离线回落本地计算（定义一致）
+    final streak = state.demo
+        ? 23
+        : (state.stats?.streak ?? computeStreak(state.entries, DateTime.now()));
+    final total = state.demo
+        ? localTotal
+        : (state.stats?.total ?? localTotal);
     final themeName = switch (state.theme) {
       ThemeSetting.auto => '跟随系统',
       ThemeSetting.light => '浅色',
@@ -47,7 +53,7 @@ class MePage extends ConsumerWidget {
             children: [
               for (final (n, v) in [
                 ('$streak', '连续天数'),
-                ('${state.demo ? total : total}', '总条数'),
+                ('$total', '总条数'),
                 ('$tagCount', '标签'),
               ])
                 Expanded(
@@ -113,7 +119,7 @@ class MePage extends ConsumerWidget {
             IosRow(
               icon: Icons.key,
               iconBg: const Color(0xFF5E5CE6),
-              title: '更换主密钥',
+              title: '更换锁定口令',
               onTap: () => showRekeyDialog(context, ref),
             ),
             IosRow(
