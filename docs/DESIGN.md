@@ -374,3 +374,120 @@ syncNow = _flushDirty()（先冲正） → _syncOnce()（全量拉取，纪元�
 | 日期 | 变更 | 提交 |
 |---|---|---|
 | 2026-11-16 晨 17 | 13 项设计定稿（③ 仅设计提请拍板） | （本提交） |
+
+## 5. 晨 19 批次：功能性设计四件 + 工程约束（2026-11-17，用户拍板）
+
+用户从提案菜单拍板四方向：评论长按与修改、媒体全屏查看器、缺口 #7 身份变更、
+iOS Widget/快捷指令；并追加两项元决策：①先评估 Windows 可行性（结论：前三件完全
+可行，Widget 为半盲区——Swift 无法本机编译，本批只做设计+Flutter 数据层，Swift 等
+买 Mac 后实现）；②「方便后期 AI 翻译原生 iOS 版」写入 AGENTS.md（§5.1）。
+
+### 5.1 工程约束：面向原生 iOS 翻译（写入 AGENTS.md，长期有效）
+
+背景：Windows 开发、后期购 Mac；长期可能将本 Flutter 应用交由 AI 翻译为原生
+SwiftUI 版本。现状架构已天然友好（逻辑层纯 Dart、UI 全 Cupertino），固化为五条：
+
+1. 业务逻辑只写 `core/` 纯 Dart 层，UI 不写业务——翻译时 Dart 逻辑层 ↔ Swift 服务层
+   一一对应；
+2. 载荷 JSON schema 唯一事实源 = `lib/core/model/diary_entry.dart`（文件头已声明），
+   原生版按同一 schema 重建加密载荷；
+3. 平台插件收敛单文件门面（条件导入 `x_io/x_web`，env_check/avatar_pool/widget_snapshot
+   同款）——换原生实现只动门面；
+4. UI 保持 Cupertino + 声明式无状态——与 SwiftUI 同构映射；
+5. Swift 专属件（WidgetKit/App Intents）等 Mac 就绪后独立目录实现，注释标明与
+   Flutter 侧数据契约——Windows 无法编译 Swift。
+
+### 5.2 评论长按菜单：复制 / 编辑 / 删除（纯客户端，契约零改动）
+
+- **关键事实**：评论内嵌加密载荷（`EntryComment` who/text/time），契约无独立评论接口
+  （模型注释已预留）；编辑/删除 = 重建载荷走既有 `replaceEntry` 冲正（§2.3/2.4），
+  **不需要任何新端点**。
+- **UI**（comments_view §4.8 吸收点转正）：长按自己的评论（who=='我'）→
+  CupertinoActionSheet：复制 / 编辑 / 删除；他人评论长按 → 仅复制。吸收层不动，
+  弹菜单不误触条目编辑（§4.8 语义保留）。
+- **编辑**：行内切换 TextField 预填原文，提交 → `editComment(entry, index, text)`；
+  取消（点空白）恢复原文。行内编辑不进草稿（短时操作）。
+- **删除**：确认弹窗 → `deleteComment(entry, index)`。
+- **Session 语义**：两方法镜像 `addComment`——重建载荷（`comments[i]` 文本替换 / 移除）
+  → `_stageLocal` → `_replaceLocal` → toast → `_kickFlush()`；`serverId==null`（尚未
+  推成）行为由 `_stageLocal` 通用逻辑覆盖，无特判。
+- **标记语义扩展（无 schema 变更）**：`pendingComments`（载荷注释里沿用
+  `encodePendingMeta(t, c)` 的 c 列表）语义从「新评论索引」扩为「**未上云评论内容索引**」：
+  编辑并入该索引（去重）；**删除时移除该索引并把其后索引整体 -1**（评论行号前移，
+  标记必须跟着重排，否则标错行）。删除本身不加标（评论已从界面消失，同条目删除先例）。
+  冲正成功 `pendingMeta=''` 后标记自动清除（既有机制零改动）。
+
+### 5.3 媒体全屏查看器（含查看管线；契约零改动）
+
+- **现状**：`ImageGrid` 全是占位 tile（真实媒体 `cekB64` 非空仅显示图标、demo 显示
+  渐变），`onOpen` 回调预留未接线；无任何查看管线。
+- **查看管线** `session.mediaBytes(ref)`：内存缓存（key=ref.id，个人日记量级无需 LRU
+  上限）→ `api.downloadMedia(ref.id)`（blob = nonce(12B)+AES-GCM 密文）→
+  `unwrapCek(b64Decode(ref.cekB64), priv)` → `aesGcmDecrypt` → 明文字节。
+  `cekB64` 为空的引用不可看（demo/未冲正条目，tile 不响应）。
+- **UI**：`onOpen` 接线 → Cupertino 全屏暗底查看器（`lib/widgets/media_viewer.dart`）：
+  PageView 左右翻（同条目 images 列表）、InteractiveViewer 双指缩放/双击、顶部关闭 +
+  「i/n」索引、底部「保存到相册」（`gal` 插件，权限拒绝/失败 toast）。下载失败页内重试。
+- **边界**：网格缩略图仍为占位（每 tile = 整张原图下载+解密，代价不成比例，真机反馈后
+  另议）；音频播放仍 P2 不动。demo 模式无真实媒体，维持占位不可点。
+- 契约影响零（`downloadMedia` 端点已存在）。
+
+### 5.4 身份变更客户端（缺口 #7 拍板：客户端先行，联调待会话 A）
+
+- **拍板内容**：按 §4.3 草案实现客户端完整能力（改名 + 换 12 词主密钥），FakeApi
+  单测覆盖；**me 页入口暂不露出**（草案原则「无端点前不做假 UI」——真实端点未上线前
+  不放可点但必失败的行），会话 A 落端点后一次性打开入口。
+- **协议修正（本轮设计审查发现 §4.3 表述不完整）**：媒体 CEK 用**当期公钥**包裹
+  （`wrapCek(mCek, pub)`）——换钥后新 priv 解不开旧包裹，仅重加密载荷不够。轮换协议
+  必须逐条目逐 MediaRef：`unwrapCek(旧 priv)` → mCek → `wrapCek(新 pub)` → 新 MediaRef
+  → 新载荷 → 新信封；媒体 blob 本体不动、不重传。原表述「CEK 包裹在载荷内随条目重
+  加密」按此修正。
+- **改名流程**：入口 dialog（新注册名 `_checkUserId` 校验 + 强确认「旧名无法再登录、
+  多设备需用新名」）→ `api.rename(newUserId)`（FakeApi 桩：迁移数据空间语义）→
+  keystore.userId 更新落盘 → re-register（`registerDevice(newUserId, 原 userKeyHex)`）。
+- **换钥流程**：强确认（旧设备持旧钥将无法解密新密文；恢复词必须抄写新词）→
+  `RecoveryWords.generate()` 新 12 词 → 新 session（同 userId、新键对）→ 逐条目
+  重加密（含媒体 CEK 重包裹）→ `api.replaceEntry`（幂等）→ KV 进度（已轮换条数，
+  中断续跑）→ 完成后 keystore 重写（新 pub/新 wrapped priv/新 recoveryCode）→
+  re-register（新 userKeyHex）。
+- **中断安全**：条目级幂等（每条 replace 完成即过半安全）；KV 进度记录轮换位置。
+- **错误面**：真实端点 404 → ApiException → dialog 明示「服务端尚未支持（缺口 #7）」。
+- demo 模式不开放（无真实身份）。
+
+### 5.5 Widget 数据快照层（设计定稿 + Flutter 数据层；Swift 等 Mac）
+
+- **拍板**：Windows 无法编译 Swift，CI 仅能验编译、视觉验收必须 Xcode——本批交付
+  设计定稿 + Flutter 数据层；WidgetKit UI / App Intents / entitlements（App Group）
+  等买 Mac 后实现。
+- **快照契约**（App Group 键值，JSON 编码值）：`writtenToday`（今日有条目）、
+  `todayCount`、`streak`（连续天数）、`lastText`（最近一条正文，≤60 字截断）、
+  `lastTime`、`total`、`updatedAtIso`。Widget 端只读此契约渲染「今日已写 ✓ / 还没写」，
+  点击 deeplink 进撰写页。
+- **写入口**：`_loadLocalEntries()` 尾部调用 `refreshWidgetSnapshot()`——内存重建是
+  所有数据变化的汇聚点（发布/冲正/同步/删除都过这里）；内容不变跳过（内存记上次
+  JSON 比较）。
+- **实现**：`lib/core/util/widget_snapshot.dart` + `_io/_web` 条件导入门面（§5.1-3
+  同款模式）；io 用 `home_widget`（`saveWidgetData` + `updateWidget`），守卫
+  `!kIsWeb && 平台==iOS`。Dart 侧先上无副作用：无 App Group entitlement 时插件调用
+  静默失败（catch 吞掉），纯增强模式同头像池（§2.7）。
+- **测试**：`buildSnapshot` 纯函数单测 + 注入 writer 的接线测试（变化才写）+ web stub。
+
+### 5.6 测试映射（晨 19 批次）
+
+| 设计点 | 测试 |
+|---|---|
+| 5.2 编辑/删除（载荷重建、冲正回填） | comment_menu_test（新）：FakeApi 全链路，编辑/删除后 flushNow 断言服务端载荷 |
+| 5.2 删除索引重排 + pendingMeta 重排 | comment_menu_test：删中间项后标记行号正确 |
+| 5.2 编辑标记并入/清除 | pending_mark_test 扩展 1-2 项 |
+| 5.2 长按菜单 UI（我/他人差异、复制、取消不误触） | keyboard_interactions_test 邻接或 comment_menu_test |
+| 5.3 查看管线（加密样本往返：加密→上传→下载→解密逐字节相等；空 cek 拒绝） | media_viewer_test（新） |
+| 5.3 查看器 UI（翻页/关闭；demo 占位不可点） | media_viewer_test widget 项 |
+| 5.4 改名（rename→keystore 更新→re-register） | identity_change_test（新） |
+| 5.4 换钥（全量重加密+媒体 CEK 重包裹+进度续跑+幂等；新钥解旧密文成功、旧钥解新密文失败） | identity_change_test |
+| 5.5 快照构建（writtenToday/streak/lastText 截断）与接线（变化才写、web stub） | widget_snapshot_test（新） |
+
+### 5.7 本批次变更记录
+
+| 日期 | 变更 | 提交 |
+|---|---|---|
+| 2026-11-17 晨 19 | 四件设计定稿 + §5.4 协议修正（媒体 CEK 重包裹）+ AGENTS.md 原生翻译友好约束 | （本提交） |

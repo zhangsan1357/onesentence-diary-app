@@ -95,3 +95,16 @@ LLM 经常默默选择一种解释然后执行。这个原则强制明确推理�
   代码先行、文档事后补。
 - **测试映射**：`docs/DESIGN.md` 的「测试映射」表随设计变更一并更新——每个设计点都要
   有可验证的测试落点。
+
+## 原生翻译友好约束（2026-11-17 用户拍板，长期有效）
+
+背景：Windows 开发机、后期购 Mac；长期可能将本 Flutter 应用交由 AI 翻译为原生
+SwiftUI 版本。现状架构已天然友好（逻辑层纯 Dart、UI 全 Cupertino），固化为五条：
+
+| # | 约束 | 原因 |
+|---|---|---|
+| 1 | 业务逻辑只写 `core/` 纯 Dart 层，UI 不写业务 | 逻辑层 ↔ Swift 服务层一一对应，翻译可机械化 |
+| 2 | 载荷 JSON schema 唯一事实源 = `lib/core/model/diary_entry.dart`（文件头声明） | 原生版按同一 schema 重建加密载荷 |
+| 3 | 平台插件收敛单文件门面（条件导入 `x_io/x_web`） | 换原生实现只动门面（env_check/avatar_pool/widget_snapshot 同款） |
+| 4 | UI 保持 Cupertino + 声明式无状态 | 与 SwiftUI 同构映射 |
+| 5 | Swift 专属件（WidgetKit/App Intents）等 Mac 就绪后独立目录实现，注释标明与 Flutter 侧数据契约 | Windows 无法编译 Swift |
