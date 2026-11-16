@@ -196,7 +196,10 @@ void main() {
     expect(find.text('新设备登录'), findsOneWidget);
     expect(find.text('多设备共享'), findsOneWidget);
     expect(find.text('注销账号'), findsOneWidget);
-    expect(find.text('更换主密钥'), findsOneWidget);
+    expect(find.text('更改注册名'), findsOneWidget); // 晨 19 §5.10 入口打开
+    expect(find.text('更换 12 词主密钥'), findsOneWidget);
+    expect(find.text('更换锁定口令'), findsOneWidget,
+        reason: '原「更换主密钥」行澄清（重包裹封套不换钥）');
     expect(find.text('自动上锁'), findsOneWidget);
     expect(find.text('每日提醒'), findsOneWidget);
     expect(find.text('Pushover 服务端推送'), findsOneWidget);
