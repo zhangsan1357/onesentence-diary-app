@@ -18,6 +18,7 @@ import '../../features/shell/home_shell.dart';
 import '../../features/theme/tokens.dart';
 import '../../widgets/common.dart';
 import '../../widgets/day_card_avatar.dart';
+import '../../widgets/media_viewer.dart';
 import '../../widgets/net_avatar.dart';
 import 'comments_view.dart';
 
@@ -697,7 +698,20 @@ class _EntryViewState extends ConsumerState<EntryView> {
         children: [
           // 正文（时间前缀 + 折叠）
           _body(b, p),
-          ImageGrid(images: p.media.where((m) => m.kind == 'image').toList()),
+          Builder(builder: (context) {
+            final images =
+                p.media.where((m) => m.kind == 'image').toList();
+            return ImageGrid(
+              images: images,
+              onOpen: (m) => unawaited(MediaViewer.show(
+                context,
+                images: images,
+                initialIndex: images.indexOf(m),
+                fetchBytes: (r) =>
+                    ref.read(appSessionProvider.notifier).mediaBytes(r),
+              )),
+            );
+          }),
           if (p.media.any((m) => m.kind == 'audio'))
             Padding(
               padding: const EdgeInsets.only(top: 9),

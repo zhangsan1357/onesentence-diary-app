@@ -530,7 +530,8 @@ class ImageGrid extends StatelessWidget {
           final real = img.cekB64.isNotEmpty;
           final g = gradients[(i + img.id) % gradients.length];
           return GestureDetector(
-            onTap: () => onOpen?.call(img),
+            // 只有真实媒体（有密钥引用）可点开查看器；demo/未冲正占位不响应（§5.3）
+            onTap: real && onOpen != null ? () => onOpen!(img) : null,
             child: Container(
               decoration: BoxDecoration(
                 borderRadius: BorderRadius.circular(10),
