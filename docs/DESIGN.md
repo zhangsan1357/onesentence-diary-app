@@ -453,6 +453,15 @@ SwiftUI 版本。现状架构已天然友好（逻辑层纯 Dart、UI 全 Cupert
 - **中断安全**：条目级幂等（每条 replace 完成即过半安全）；KV 进度记录轮换位置。
 - **错误面**：真实端点 404 → ApiException → dialog 明示「服务端尚未支持（缺口 #7）」。
 - demo 模式不开放（无真实身份）。
+- **§5.4 序修正（实现期发现，2026-11-17）**：原序「逐条 replace → keystore 重写」
+  存在不可恢复中断窗口——replace 完成后 keystore 重写前崩溃，本地旧钥解不开已上云
+  的新密文。修正为：① 新词→新键对（同 userId）→ ② **keystore 先重写为新身份**，
+  旧私钥以新公钥 ECIES 包裹暂存 KV `cfg.rotateOld` + 进度 `cfg.rotateDone` →
+  ③ 逐条目重加密 `replaceEntry`（幂等，按进度续跑）→ ④ rotate 端点换 userKey 换
+  token → ⑤ 清暂存。任何一步崩溃均可续跑：恢复会话后读到 `cfg.rotateOld` → 用新
+  私钥解包旧私钥 → 从进度继续。续跑挂点 = `unlock()` 与 init 明文恢复分支。
+  轮换开始先 `syncNow()`（清空在途队列：暂存媒体引用是旧钥包裹，轮换窗口内冲正会
+  造成不可解引用）。
 
 ### 5.5 Widget 数据快照层（设计定稿 + Flutter 数据层；Swift 等 Mac）
 
