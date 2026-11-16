@@ -261,7 +261,18 @@
 5. 测试 **134 项全绿**（新增 8，`test/features/avatar_pool_test.dart`）：md5 黄金向量逐字钉死、indexFor 确定性+范围、种子生成（数量/唯一/双闭区间/持久化复用）、批次下载（全落盘/幂等不再拉/失败重试封顶/原子写不落半张）、并发上限峰值=3、Wi-Fi 门（非 Wi-Fi 零拉取+stop 退出）、pathFor 边界、渲染两分支。analyze 零告警。
 6. **踩坑**：①门面文件只 `export` 条件实现时自身作用域没有 `createAvatarPool`（`import`+`export` 双写）；②`prefer_initializing_formals` 告警——注入型构造器的字段与参数同名（公开字段 + 初始化形参 + 默认值指向静态方法）；③重试语义：「≤3 次封顶」必须配**多轮巡检**（单轮内每格只访问一次，计数器无意义），收束条件=整轮零发起。
 
-## 测试清单（`flutter test` 134 项全绿；后端未启动时 live 14 项自动 SKIP）
+## 2026-11-17（晨 19）四件功能 + 排序语义修正 v2 + 服务端计算清单（设计先行全程）
+
+1. **设计定稿（`6f733a7`，DESIGN §5）**：用户从提案菜单拍板四方向——评论长按菜单（复制/编辑/删除）、媒体全屏查看器、缺口 #7 身份变更客户端、iOS Widget 快照层（Swift 等买 Mac）；**AGENTS.md 新节「原生翻译友好约束」**（Windows 开发/后期购 Mac/便于 AI 翻译原生 SwiftUI：逻辑只写 core 纯 Dart 层、payload schema 唯一事实源、平台插件收敛单文件门面、UI Cupertino 声明式、Swift 专属件等 Mac）。
+2. **排序语义修正 v2（`e4922be` 设计 / `5fb3edc` 实现，§5.8，用户拍板替代晨 17 §4.2）**：天卡=天逆序（已正确）+ **天内时间升序（写作先后）+ 评论不影响排序**。根因两处：晨 17 用了时间倒序 + updatedAt tiebreak（评论会刷新它）。修复=库表新增 `createdAtMs`（**schema v3→v4 迁移**，存量回填 updatedAtMs；publish 写一次、编辑/评论/冲正 absent 保留、sync 新行回填）+ `groupByDay` 比较链 `time↑ → createdAt↑ → updatedAt↑`。测试：升序确定性/同分钟创建序并列/**评论刷新 updatedAt 不变序**专项。
+3. **评论长按菜单（§5.2，零契约改动）**：评论内嵌加密载荷（`EntryComment`）→ 编辑/删除=重建载荷走既有 `replaceEntry` 冲正。UI：§4.8 吸收点转正——长按自己评论 CupertinoActionSheet（复制/编辑/删除），他人评论仅复制；编辑=行内 TextField 预填。session `editComment/deleteComment` 镜像 addComment；`pendingComments` 语义扩为「未上云评论内容索引」（编辑并入去重、**删除移除+其后索引整体 -1**；`_stageLocal` 增 `replaceMeta` 整体替换旁路——合并语义对删除不成立）。测试 7 项（`comment_menu_test.dart`）。
+4. **媒体全屏查看器（§5.3，`733ad50`）**：`session.mediaBytes` 查看管线（downloadMedia→`unwrapCek` 解媒体 CEK 包裹→AES-GCM 解密；会话级缓存，锁定/注销清空）+ `media_save` 门面（gal ^3.0.1 / web 桩，条件导入）+ `MediaViewer`（暗底 PageView 左右翻+InteractiveViewer 缩放+i/n 索引+保存到相册+失败页内重试）+ feed `ImageGrid.onOpen` 接线（**无密钥引用 tile 不响应——demo 占位不可点**）。边界：网格缩略图仍占位（每 tile=整原图下载+解密代价不成比例）；音频播放仍 P2。测试 7 项（`media_viewer_test.dart`；踩坑：`Image.memory` 需真实 PNG 字节、build 内回调 onLoaded 触发无界重建循环→改 future 完成时回调一次）。
+5. **心情管理服务端同步核查与修正（`448ee5b` 设计 / `0c37abe` 实现，§5.9，用户拍板）**：核查结论=**只拉不推**（契约无心情写入端点=缺口 #8）+ **复活 bug**（服务端来源心情删除后被拉回——标签有删除名单、心情没有）。修正：心情删除名单 `_deletedMoods`（KV `cfg.moodDeleted`，拉取过滤防复活）+ 推送先行（api_client `saveMood/deleteMood` 镜像 saveTag 同 moodKey 幂等；addMood/updateMood 自定义推、removeMood 推删；colorHex→色名反查；**默认 6 心情显示覆盖不推=设备本地偏好**；失败静默端点上线即生效）+ 缺口 #8 扩充转发会话 A。测试 3 项（draft_config_test 心情组）。
+6. **缺口 #7 身份变更客户端（`87b2240` 设计修订 / `e800081` 实现，§5.4）**：api_client `rename/rotate` 端点（提案）。`renameIdentity`：先过服务端（失败零状态变更）→ keystore.userId 更新 → 重注册。`rotateIdentity`：**序修正（实现期发现原草案有不可恢复中断窗口）**——① 新词新键对 → ② **keystore 先重写** + 旧私钥以新公钥 ECIES 暂存 `cfg.rotateOld` + 进度 `cfg.rotateDone` → ③ 逐条目重加密（**媒体 CEK 旧解新包，blob 免重传**；§4.3 原表述不完整已修正）→ ④ rotate 端点换 userKey 换 token → ⑤ 清暂存；崩溃后 unlock/init 挂钩 `_resumeRotateIfAny` 从进度续跑；轮换前先冲正（在途暂存媒体引用是旧钥包裹）。me 页入口**暂不露出**（「无端点前不做假 UI」），端点就绪一次性打开。测试 4 项（`identity_change_test.dart`）。
+7. **Widget 数据快照层（`e800081`，§5.5）**：`widget_snapshot_core` 纯函数契约（writtenToday/todayCount/streak/lastText≤60 截断/lastTime/total/updatedAtIso；streak 与 computeStreak 同语义今天未写不断签）+ `home_widget` 门面（iOS 守卫、无 entitlement 静默、注入点测试预留）+ 接线在 `_loadLocalEntries` 尾部（所有数据变化汇聚点；**内容不变跳过**——比较排除 updatedAtIso 时间戳键）。**WidgetKit/App Intents/entitlements 等 Mac 后**（Windows 无法编译 Swift）。测试 4 项（`widget_snapshot_test.dart`）。
+8. 测试 **160 项全绿**（净增 26），analyze 零告警。**待办提醒**：真机验收排序/菜单/查看器；会话 A 侧待拍板——缺口 #7 端点（rename/rotate）、缺口 #8 扩充（saveMood/deleteMood）、**晨 19 服务端计算清单**（§5.8：返回顺序契约 `date DESC, id ASC`=缺口 #11、统计聚合 `/diary/stats`、分页游标、E2EE 边界禁止项）。
+
+## 测试清单（`flutter test` 160 项全绿；后端未启动时 live 14 项自动 SKIP）
 
 - **golden 向量 9 项**（`test/core/e2ee/golden_test.dart`，02 §7 固化向量）：Argon2id masterKey、X25519 公钥推导（clamp）、sharedSecret、HKDF encKey、92B EncryptedCEK 字节布局、AES-GCM cipher+tag 布局、完整 JSON fixture 解密、确定性加密复现完整 JSON、随机往返。**一次实现全绿**，Dart 端与 Go 参考实现逐字节互通。
 - **恢复词 7 项**（`test/core/session/recovery_words_test.dart`）：BIP39 黄金向量（熵全 0 短语+seed，Node 互证）、生成多轮校验、抄写错误四类拒绝（换词/缺词/词表外/错序）、空白归一化、hex 判定、**diaryPass 动态口令向量（活后端实测）+窗口边界**。
@@ -277,9 +288,14 @@
 - **显示配置 4 项**（`test/core/session/display_cfg_test.dart`）：标签库增删（初始含默认三项）+ KV 重载（'[]' 空库语义）、调色板覆盖/恢复自动/非法色名忽略、心情增删改（默认仅改显示）+ KV 重载、cfgVersion 自增。MemoryLocalStore 注入 + debugLoadCfg 钩子；静态表 setUp/tearDown 复位防污染。
 - **本地先行/后台冲正 2 项**（`test/features/offline_sync_test.dart` 增补，2026-11-16 晨 17）：离线发布→后台冲正失败 toast「云端不可达」留队；在线发布本地先行→后台冲正回填 serverId+清队列标记（发布即时返回不等网络）。`debugHoldFlush` 挂起后台触发保确定性。
 - **双写/草稿 6 项**（`test/features/draft_config_test.dart`，2026-11-16 晨 17）：saveTag 推覆盖优先生效色（同名=更新）；拉取补缺合并+同名本地优先；删除名单防拉取复活；心情种子仅补本地没有的 key；草稿保存/读取往返（loadDraft 先落防抖值）+ 清除；注销清草稿与删除名单。CfgFakeApi 补 config 三端点桩。
-- **组内排序 2 项**（`test/core/model/payload_test.dart` 增补，2026-11-16 晨 17）：乱序输入组内 time 倒序确定性输出；同时间按 updatedAt 倒序。
+- **组内排序 3 项**（`test/core/model/payload_test.dart`，2026-11-17 晨 19 语义 v2）：乱序输入组内 time 升序（写作先后）确定性输出；同分钟并列按创建序 createdAt；**评论/编辑刷新 updatedAt 不变序**专项（晨 17 版倒序断言已按用户拍板改写）。
 - **键盘/评论交互 5 项**（`test/features/keyboard_interactions_test.dart`，2026-11-16 晨 17）：长按评论不误触条目编辑（手势吸收）；评论发送后 focusNode 失焦+输入清空+草稿清除；评论草稿恢复预填；dataRev 自增收起已展开评论（失败路径不收）；compose 草稿恢复+点空白收键盘。FakeAsync 踩坑：pump 推假时钟 + pump 3s 放掉 holidays timeout Timer（见晨 17 §8）。
 - **头像预下载池 8 项**（`test/features/avatar_pool_test.dart`，2026-11-17 晨 18）：md5 黄金向量（798969707@qq.com→dedf817b…，后端 AvatarUtil 示例逐字一致）；indexFor 确定性+范围；种子生成（数量/唯一/双闭区间 123456789~987654321/seeds.json 持久化复用）；批次下载（全落盘/幂等/失败重试封顶/原子写）；并发上限峰值=3；Wi-Fi 门（非 Wi-Fi 零拉取+stop 退出）；pathFor 边界；渲染两分支（池命中 Image.file/缺失回落 NetAvatar）。fetch/isWifi/resolveDir/批量参数全注入。
+- **评论菜单 7 项**（`test/features/comment_menu_test.dart`，2026-11-17 晨 19）：编辑（载荷重建/标记并入去重/冲正推云新文本在密文内/保留原评论时间）；删除（标记索引重排其后-1/冲正后服务端载荷少一条）；删除未冲正新评论（标记随内容消失/载荷留队幂等）；菜单差异（自己=复制/编辑/删除，他人=仅复制）；复制（剪贴板 mock+提示）；行内编辑（预填/保存落库载荷更新）；删除确认弹窗。
+- **媒体查看器 7 项**（`test/features/media_viewer_test.dart`，2026-11-17 晨 19）：查看管线往返（加密上传→下载解密逐字节相等）；缓存命中不再下载；空密钥引用拒绝+未知媒体 id 报错；查看器暗底/索引标题/关闭返回；加载失败页内重试；保存按钮加载后启用+注入 saveBytes 被调+提示；ImageGrid 门控（无密钥引用不响应）。
+- **心情同步 3 项**（`test/features/draft_config_test.dart` 增补，2026-11-17 晨 19）：自定义增/改推 saveMood（colorHex→色名反查/同 moodKey 幂等）+默认覆盖不推；删除名单防复活（删除推 deleteMood+KV 持久化+拉取过滤）；推送失败静默（本地照常生效/名单仍持久化）。
+- **身份变更 4 项**（`test/features/identity_change_test.dart`，2026-11-17 晨 19）：改名全链路（rename→keystore 落盘→重注册同 userKey 新 userId）；改名 404 零状态变更；换钥全链路（全量重加密/媒体 CEK 重包裹后 mediaBytes 仍可解/新钥可解旧钥不可解/rotate 端点一次/register 不再走/暂存清理）；轮换中断续跑（④ 失败暂存留存→debugResumeRotate 补 ④⑤ 清暂存）。
+- **Widget 快照 4 项**（`test/features/widget_snapshot_test.dart`，2026-11-17 晨 19）：构建器（今日已写/今日条数/streak 断档/已删不计/最近一句=日期+日内时间最大/lastText 60 字截断）；今天未写不断签；空数据全零；会话接线（汇聚点触发/内容不变跳过排除时间戳键/发布后写入全字段）。
 - **光晕像素采样 2 项**（`test/features/glow_pixel_test.dart`；深色期望改为可见 Δ≥4 ≤48——用户覆盖原版 0.15）。
 - **live 集成 14 项**（`test/live/integration_live_test.dart`）：原 11 项回归（全程隐式验证 X-Diary-Pass）+ M3-12 动态口令 401 + M3-13 多设备共享 + M3-14 冒名拒绝。**2026-11-14 后端 v4 实测 14/14 全绿**（未启动自动 SKIP）。
 
