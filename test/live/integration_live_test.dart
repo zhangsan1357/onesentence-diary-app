@@ -52,26 +52,40 @@ void main() {
     api = ApiClient();
   });
 
+  /// 注册（限流 429 退避重试两次——本地联调反复跑套件会撞；CI 无后端不走到这）。
+  Future<DeviceRegResult> reg(
+    ApiClient a, {
+    required String userId,
+    required String deviceNo,
+    String name = 'flutter-live',
+    String userKeyHex = _pubHex,
+  }) async {
+    for (var i = 0;; i++) {
+      try {
+        return await a.registerDevice(
+          userId: userId,
+          deviceNo: deviceNo,
+          name: name,
+          userKeyHex: userKeyHex,
+        );
+      } on ApiException catch (e) {
+        if (e.code != 429 || i >= 2) rethrow;
+        await Future<void>.delayed(Duration(seconds: 5 * (i + 1)));
+      }
+    }
+  }
+
   test('M3-1 设备注册：注册名+密钥二元组 → token/deviceId；同 deviceNo 幂等', () async {
     final a = api;
     if (a == null) return;
-    final r1 = await a.registerDevice(
-      userId: userId,
-      deviceNo: deviceNo,
-      name: 'flutter-live',
-      userKeyHex: _pubHex,
-    );
+    final r1 = await reg(a, userId: userId, deviceNo: deviceNo);
     expect(r1.token.length, 64);
     expect(r1.deviceId, greaterThan(0));
     a.token = r1.token;
     a.otpKey = _pubHex; // 此后所有业务请求自动附 X-Diary-Pass（回归口令头）
 
-    final r2 = await a.registerDevice(
-      userId: userId,
-      deviceNo: deviceNo,
-      name: 'flutter-live-2',
-      userKeyHex: _pubHex,
-    );
+    final r2 =
+        await reg(a, userId: userId, deviceNo: deviceNo, name: 'flutter-live-2');
     expect(r2.deviceId, r1.deviceId); // 幂等：同 deviceNo 更新不新建
     a.token = r2.token; // 重发 token
   });
@@ -302,7 +316,7 @@ void main() {
     if (a == null) return;
     // 设备 B：新 deviceNo，同 userId + 同 userKey（= 新设备登录语义）
     final b = ApiClient();
-    final rb = await b.registerDevice(
+    final rb = await reg(b,
       userId: userId,
       deviceNo: 'flutter-live-b-$runId',
       name: 'flutter-live-b',
@@ -322,10 +336,10 @@ void main() {
     if (a == null) return;
     final impostor = ApiClient();
     await expectLater(
-      impostor.registerDevice(
+      reg(
+        impostor,
         userId: userId,
         deviceNo: 'flutter-live-x-$runId',
-        name: 'impostor',
         userKeyHex: 'ab' * 32,
       ),
       throwsA(predicate((e) => e is ApiException && e.code == 404)),
@@ -350,12 +364,7 @@ void main() {
   /// 独立身份（互不污染计数/名单）。
   Future<ApiClient> fresh(String tag) async {
     final a = ApiClient();
-    final r = await a.registerDevice(
-      userId: 'live-$tag-$runId',
-      deviceNo: 'dev-$tag-$runId',
-      name: 'flutter-live',
-      userKeyHex: _pubHex,
-    );
+    final r = await reg(a, userId: 'live-$tag-$runId', deviceNo: 'dev-$tag-$runId');
     a.token = r.token;
     a.otpKey = _pubHex;
     return a;
@@ -374,59 +383,63 @@ void main() {
     );
   }
 
-  // test('M3-15 stats：total/streak/heatmap 稀疏+date ASC/perMonth（晨 19 对齐项）', () async {
-  //   final a = await fresh('st');
-  //   await create(a, '08:00', 'stats 一');
-  //   await create(a, '21:00', 'stats 二');
-  //   final s = await a.stats();
-  //   expect(s.total, 2, reason: '独立身份恰好两条');
-  //   expect(s.streak, greaterThanOrEqualTo(1), reason: '今天有记录 → 锚点今天');
-  //   expect(s.heatmap, isNotEmpty);
-  //   for (final d in s.heatmap) {
-  //     expect(d.count, greaterThan(0), reason: '稀疏：零值日不出现，客户端自填');
-  //   }
-  //   final dates = s.heatmap.map((d) => d.date).toList();
-  //   expect(dates, equals(dates.toList()..sort()), reason: 'date ASC');
-  //   expect(dates.last, _today(), reason: '窗口含今天');
-  //   expect(s.perMonth.map((m) => m.month), contains(_month()));
-  // });
-  //
-  // test('M3-16 rename（缺口 #7）：改名 → 新名重注册同 userKey 成功', () async {
-  //   final a = await fresh('rn');
-  //   await a.rename('live-rn2-$runId');
-  //   final b = ApiClient();
-  //   final r = await b.registerDevice(
-  //     userId: 'live-rn2-$runId',
-  //     deviceNo: 'dev-rn2-$runId',
-  //     name: 'flutter-live',
-  //     userKeyHex: _pubHex,
-  //   );
-  //   expect(r.token.length, 64, reason: '数据空间已重键到新名');
-  // });
-  //
-  // test('M3-17 rotate（缺口 #7）：换 userKey 换 token → 新钥可写', () async {
-  //   final a = await fresh('ro');
-  //   final k2 = 'cd' * 32;
-  //   final r2 = await a.rotate(userKeyHex: k2);
-  //   expect(r2.token.length, 64);
-  //   a.token = r2.token;
-  //   a.otpKey = k2;
-  //   final id = await create(a, '10:00', 'rotate 后新钥写入');
-  //   expect(id, greaterThan(0), reason: '新 userKey 放行后业务可用');
-  // });
-  //
-  // test('M3-18 mood 写入/删除（缺口 #8）：saveMood 回读 → deleteMood 消失', () async {
-  //   final a = await fresh('mo');
-  //   final key = 'lm$runId'; // 1~16 位小写/数字/下划线（服务端校验）
-  //   final id = await a.saveMood(moodKey: key, emoji: '🚀', color: '#34C759');
-  //   expect(id, greaterThan(0));
-  //   final moods = await a.configMoods();
-  //   final mine = moods.where((m) => m.moodKey == key).toList();
-  //   expect(mine.length, 1);
-  //   expect(mine.single.emoji, '🚀');
-  //   expect(mine.single.color, '#34C759');
-  //   await a.deleteMood(key);
-  //   final after = await a.configMoods();
-  //   expect(after.where((m) => m.moodKey == key), isEmpty);
-  // });
+  test('M3-15 stats：total/streak/heatmap 稀疏+date ASC/perMonth（晨 19 对齐项）', () async {
+    if (api == null) return; // 后端未启动（CI）：SKIP（约定对全部 live 项生效）
+    final a = await fresh('st');
+    await create(a, '08:00', 'stats 一');
+    await create(a, '21:00', 'stats 二');
+    final s = await a.stats();
+    expect(s.total, 2, reason: '独立身份恰好两条');
+    expect(s.streak, greaterThanOrEqualTo(1), reason: '今天有记录 → 锚点今天');
+    expect(s.heatmap, isNotEmpty);
+    for (final d in s.heatmap) {
+      expect(d.count, greaterThan(0), reason: '稀疏：零值日不出现，客户端自填');
+    }
+    final dates = s.heatmap.map((d) => d.date).toList();
+    expect(dates, equals(dates.toList()..sort()), reason: 'date ASC');
+    expect(dates.last, _today(), reason: '窗口含今天');
+    expect(s.perMonth.map((m) => m.month), contains(_month()));
+  });
+
+  test('M3-16 rename（缺口 #7）：改名 → 新名重注册同 userKey 成功', () async {
+    if (api == null) return; // 后端未启动（CI）：SKIP
+    final a = await fresh('rn');
+    await a.rename('live-rn2-$runId');
+    final b = ApiClient();
+    final r = await b.registerDevice(
+      userId: 'live-rn2-$runId',
+      deviceNo: 'dev-rn2-$runId',
+      name: 'flutter-live',
+      userKeyHex: _pubHex,
+    );
+    expect(r.token.length, 64, reason: '数据空间已重键到新名');
+  });
+
+  test('M3-17 rotate（缺口 #7）：换 userKey 换 token → 新钥可写', () async {
+    if (api == null) return; // 后端未启动（CI）：SKIP
+    final a = await fresh('ro');
+    final k2 = 'cd' * 32;
+    final r2 = await a.rotate(userKeyHex: k2);
+    expect(r2.token.length, 64);
+    a.token = r2.token;
+    a.otpKey = k2;
+    final id = await create(a, '10:00', 'rotate 后新钥写入');
+    expect(id, greaterThan(0), reason: '新 userKey 放行后业务可用');
+  });
+
+  test('M3-18 mood 写入/删除（缺口 #8）：saveMood 回读 → deleteMood 消失', () async {
+    if (api == null) return; // 后端未启动（CI）：SKIP
+    final a = await fresh('mo');
+    final key = 'lm$runId'; // 1~16 位小写/数字/下划线（服务端校验）
+    final id = await a.saveMood(moodKey: key, emoji: '🚀', color: '#34C759');
+    expect(id, greaterThan(0));
+    final moods = await a.configMoods();
+    final mine = moods.where((m) => m.moodKey == key).toList();
+    expect(mine.length, 1);
+    expect(mine.single.emoji, '🚀');
+    expect(mine.single.color, '#34C759');
+    await a.deleteMood(key);
+    final after = await a.configMoods();
+    expect(after.where((m) => m.moodKey == key), isEmpty);
+  });
 }
