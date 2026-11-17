@@ -2001,8 +2001,10 @@ class AppSession extends Notifier<AppState> {
   void _pushMood(MoodCfg m) {
     final hex =
         '#${(m.colorHex & 0xFFFFFF).toRadixString(16).toUpperCase().padLeft(6, '0')}';
+    // emoji @NotBlank（服务端校验）：存量/异常空值兜底默认表情，避免推送恒 400
+    final emoji = m.emoji.isEmpty ? '📝' : m.emoji;
     unawaited(_api
-        .saveMood(moodKey: m.key, emoji: m.emoji, color: hex)
+        .saveMood(moodKey: m.key, emoji: emoji, color: hex)
         .catchError((_) => 0));
   }
 

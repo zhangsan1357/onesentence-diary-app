@@ -69,8 +69,9 @@ void main() {
           userKeyHex: userKeyHex,
         );
       } on ApiException catch (e) {
+        // 429 = 60 秒滑窗（10 次/分钟/IP）：等待序列覆盖窗口（15s 级等不到）
         if (e.code != 429 || i >= 2) rethrow;
-        await Future<void>.delayed(Duration(seconds: 5 * (i + 1)));
+        await Future<void>.delayed(Duration(seconds: const [20, 45][i]));
       }
     }
   }
