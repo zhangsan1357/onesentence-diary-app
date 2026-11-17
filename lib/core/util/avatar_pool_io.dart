@@ -2,7 +2,7 @@
 // 后台静默分批下载（并发 3 / 批 20 / 批间隔 2~5s 抖动 / 单张超时 8s / 失败 ≤3 次
 // 跳过下次启动再巡检 / 非 Wi-Fi 批间等待重查——connectivity_plus）。
 // 断点续传 = 文件即进度（晨 18 简化：文件系统本身就是状态，进程被杀无损坏）。
-// 池是纯增强：任何失败静默（渲染回落 NetAvatar 网络链路），绝不影响主流程。
+// 池是纯增强：任何失败静默（渲染走默认人像，§5.12），绝不影响主流程。
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
@@ -10,6 +10,7 @@ import 'dart:math';
 
 import 'package:connectivity_plus/connectivity_plus.dart';
 import 'package:dio/dio.dart';
+import 'package:flutter/foundation.dart';
 import 'package:path_provider/path_provider.dart';
 
 import 'avatar_pool_core.dart';
@@ -21,8 +22,11 @@ abstract class AvatarPool {
   /// 停止循环（生命周期/测试）。
   void stop();
 
-  /// 文件存在 → 绝对路径（同步 exists，µs 级）；否则 null（渲染回落网络链路）。
+  /// 文件存在 → 绝对路径（同步 exists，µs 级）；否则 null（渲染走默认人像）。
   String? pathFor(int index);
+
+  /// 池进度（§5.12 设置页查看）。
+  ValueNotifier<PoolProgress> get progress;
 }
 
 AvatarPool createAvatarPool() => IoAvatarPool();
@@ -45,6 +49,17 @@ class IoAvatarPool implements AvatarPool {
   List<int>? _seeds;
   Directory? _dir;
   final _attempts = <int, int>{};
+
+  /// 池进度（§5.12 设置页查看）：初始「未启用」，start 成功进入填充即启用
+  ///（enabled=true）；start 时目录一次扫描计初值（文件即进度），fill 每张
+  /// 成功 +1。PoolProgress const 相等 → 未变化不重刷。
+  @override
+  final ValueNotifier<PoolProgress> progress =
+      ValueNotifier<PoolProgress>(const PoolProgress(
+          filled: 0, total: kAvatarPoolSize, enabled: false));
+
+  void _bumpFilled(int filled) =>
+      progress.value = PoolProgress(filled: filled, total: size, enabled: true);
 
   /// 注入点均为测试预留（默认实现为真实依赖）。
   IoAvatarPool({
@@ -69,13 +84,20 @@ class IoAvatarPool implements AvatarPool {
     _stopped = false;
     try {
       final dir = await resolveDir();
-      if (dir == null) return; // path_provider 不可用（测试/平台异常）→ 静默禁用
+      if (dir == null) {
+        // path_provider 不可用（测试/平台异常）→ 静默禁用（进度行显「未启用」）
+        progress.value = PoolProgress(filled: 0, total: size, enabled: false);
+        return;
+      }
       _dir = dir;
       if (!await dir.exists()) await dir.create(recursive: true);
       _seeds = await _ensureSeeds(dir);
+      // 进度初值：一次目录扫描（文件即进度，无需重下载校验）
+      _bumpFilled(_countFilled(dir));
       await _fill();
     } catch (_) {
-      // 池失败不影响主流程（渲染回落 NetAvatar）
+      progress.value = PoolProgress(filled: 0, total: size, enabled: false);
+      // 池失败不影响主流程（渲染走默认人像）
     } finally {
       _running = false;
     }
@@ -84,6 +106,15 @@ class IoAvatarPool implements AvatarPool {
   @override
   void stop() {
     _stopped = true;
+  }
+
+  /// 已就绪张数（av-*.png 计数，.tmp 半成品不算）。
+  int _countFilled(Directory dir) {
+    var n = 0;
+    for (final e in dir.listSync()) {
+      if (e is File && e.path.endsWith('.png')) n++;
+    }
+    return n;
   }
 
   @override
@@ -121,6 +152,7 @@ class IoAvatarPool implements AvatarPool {
   Future<void> _fill() async {
     final seeds = _seeds!;
     final sep = Platform.pathSeparator;
+    var filled = progress.value.filled;
     // 多轮全池巡检：失败项下一轮重试（≤maxAttempts 封顶），一整轮无可做之事
     //（全部已下载/全部封顶）即收束——遗留项等下次启动再巡检。
     for (var pass = 0; pass < maxAttempts && !_stopped; pass++) {
@@ -148,6 +180,7 @@ class IoAvatarPool implements AvatarPool {
               final tmp = File('${f.path}.tmp');
               await tmp.writeAsBytes(bytes, flush: true);
               await tmp.rename(f.path); // 原子写：进程被杀不留半张
+              _bumpFilled(++filled); // §5.12：每张成功即上报（设置页实时可见）
             } catch (_) {
               _attempts[idx] = (_attempts[idx] ?? 0) + 1;
             }

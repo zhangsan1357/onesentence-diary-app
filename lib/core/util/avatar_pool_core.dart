@@ -25,3 +25,27 @@ int avatarPoolIndex(String key) =>
 /// 池图像 URL：md5(email) → cn.cravatar.com 直连（免 301，客户端既定 host）+ s=184。
 String avatarPoolUrl(String email) =>
     '${avatarUrl(email)}?s=$kAvatarPoolSizeParam';
+
+/// 池进度快照（晨 19 §5.12 设置页查看）：filled=已就绪张数，total=池容量，
+/// enabled=本平台池是否启用（web 无 dart:io → false）。纯值类，const 相等
+/// 判断供 ValueNotifier 去重。
+class PoolProgress {
+  final int filled;
+  final int total;
+  final bool enabled;
+  const PoolProgress({
+    required this.filled,
+    required this.total,
+    this.enabled = true,
+  });
+
+  @override
+  bool operator ==(Object other) =>
+      other is PoolProgress &&
+      other.filled == filled &&
+      other.total == total &&
+      other.enabled == enabled;
+
+  @override
+  int get hashCode => Object.hash(filled, total, enabled);
+}

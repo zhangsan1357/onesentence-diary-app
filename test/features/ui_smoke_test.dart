@@ -8,7 +8,6 @@ import 'package:diary_app/features/onboarding/onboarding_page.dart';
 import 'package:diary_app/main.dart';
 import 'package:diary_app/widgets/animal_avatar.dart';
 import 'package:diary_app/widgets/common.dart';
-import 'package:diary_app/widgets/net_avatar.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -58,13 +57,13 @@ void main() {
   testWidgets('feed：评论展开——本地头像渲染 + 时间标准格式（存量 HH:mm 补条目日期）',
       (tester) async {
     await _pumpHome(tester);
-    // 天卡头像（第三方随机头像，种子=日期每天一个）：11-12 与 11-11 两张卡
-    expect(find.byType(NetAvatar), findsNWidgets(2));
+    // 天卡头像（§5.12 本地化 v5）：测试环境池无文件 → 默认人像，11-12 与 11-11 两张卡
+    expect(find.byIcon(Icons.person), findsNWidgets(2));
     // 展开首条（11-12，2 条评论）的评论列表
     await tester.tap(find.byIcon(Icons.mode_comment_outlined).first);
     await tester.pumpAndSettle();
-    // 每条评论一个动物头像（2 天卡 NetAvatar + 2 评论 AnimalAvatar）
-    expect(find.byType(NetAvatar), findsNWidgets(2));
+    // 每条评论一个动物头像（2 天卡默认人像 + 2 评论 AnimalAvatar）
+    expect(find.byIcon(Icons.person), findsNWidgets(2));
     expect(find.byType(AnimalAvatar), findsNWidgets(2));
     // 存量 HH:mm 评论补条目日期 → 标准格式
     expect(find.text('2026-11-12 21:30'), findsOneWidget);
@@ -205,6 +204,9 @@ void main() {
     expect(find.text('Pushover 服务端推送'), findsOneWidget);
     expect(find.text('标签管理'), findsOneWidget);
     expect(find.text('心情管理'), findsOneWidget);
+    // 头像库进度行（§5.12）：测试/web 环境池禁用 → 「未启用」
+    expect(find.text('头像库'), findsOneWidget);
+    expect(find.text('未启用'), findsOneWidget);
     expect(find.text('导出全部日记'), findsOneWidget);
     expect(find.text('立即锁定'), findsOneWidget);
     expect(find.text('外观'), findsOneWidget);

@@ -6,6 +6,7 @@ import '../../core/api/api_client.dart';
 import '../../core/app_icon.dart';
 
 import '../../core/session/app_session.dart';
+import '../../core/util/avatar_pool.dart';
 import '../../core/util/errors.dart';
 import '../../features/theme/tokens.dart';
 import '../../widgets/common.dart';
@@ -232,6 +233,21 @@ class MePage extends ConsumerWidget {
               iconBg: const Color(0xFFAF52DE),
               title: '心情管理',
               onTap: () => showMoodConfigDialog(context, ref),
+            ),
+            // 头像库更新进度（晨 19 §5.12）：预下载池后台仅 Wi-Fi 填充，
+            // 天卡渲染只走本地（缺失默认人像）——本行纯查看，无操作
+            ValueListenableBuilder<PoolProgress>(
+              valueListenable: ref.watch(avatarPoolProvider).progress,
+              builder: (context, p, _) => IosRow(
+                icon: Icons.image_outlined,
+                iconBg: const Color(0xFFFFCC00),
+                title: '头像库',
+                value: !p.enabled
+                    ? '未启用'
+                    : p.filled >= p.total
+                        ? '已就绪 ${p.filled}/${p.total}'
+                        : '更新中 ${p.filled}/${p.total}',
+              ),
             ),
             // App 图标切换（2026-11-16，iOS 备用图标机制；web 预览不显示）
             if (AppIcon.supported)

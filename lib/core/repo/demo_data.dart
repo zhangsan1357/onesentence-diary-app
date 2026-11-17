@@ -1,8 +1,7 @@
 // 演示数据 = mockup v2 的 ENTRIES 逐条移植（Chrome 视觉迭代用，M2-b 对照）。
 // cek 为空的 MediaRef 表示 demo 占位（UI 渲染渐变色块，不发网络请求）。
-// 头像：demo 无后端 → 用 avatar.dart 同款模板（与后端定稿格式一致）本地拼。
+// 头像（§5.12 本地化 v5）：不设 avatarUrl——渲染走本地池/默认人像。
 import '../model/diary_entry.dart';
-import '../util/avatar.dart';
 
 DiaryEntry _demo({
   required String date,
@@ -36,7 +35,6 @@ DiaryEntry _demo({
     ),
     cipherJson: null,
     updatedAt: DateTime.parse('$date $time'.replaceFirst(' ', 'T')),
-    avatarUrl: avatarUrl('demo-$date-$seq'),
   );
 }
 

@@ -6,7 +6,6 @@ import 'dart:math';
 
 import 'package:diary_app/core/util/avatar_pool.dart';
 import 'package:diary_app/widgets/day_card_avatar.dart';
-import 'package:diary_app/widgets/net_avatar.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -172,27 +171,50 @@ void main() {
     expect(pool.pathFor(5), isNull, reason: '越界');
   });
 
-  testWidgets('渲染：池文件命中走 Image.file，缺失回落 NetAvatar', (tester) async {
+  testWidgets('渲染（§5.12）：池文件命中走 Image.file，缺失默认人像（零网络）', (tester) async {
     final dir = _tmpDir();
     addTearDown(() => dir.deleteSync(recursive: true));
     final hit = File('${dir.path}${Platform.pathSeparator}av-0.png');
-    hit.writeAsBytesSync([1, 2, 3]);
+    hit.writeAsBytesSync(kPng1x1);
 
     await tester.pumpWidget(MaterialApp(
       home: Scaffold(
-        body: DayCardAvatar(poolPath: hit.path, url: null, size: 56),
+        body: DayCardAvatar(poolPath: hit.path, size: 56),
       ),
     ));
     await tester.pump();
     expect(find.byType(Image), findsOneWidget, reason: '池命中本地直读');
-    expect(find.byType(NetAvatar), findsNothing);
+    expect(find.byIcon(Icons.person), findsNothing);
 
     await tester.pumpWidget(MaterialApp(
       home: Scaffold(
-        body: DayCardAvatar(poolPath: null, url: 'https://cn.cravatar.com/avatar/x.png', size: 56),
+        body: DayCardAvatar(poolPath: null, size: 56),
       ),
     ));
     await tester.pump();
-    expect(find.byType(NetAvatar), findsOneWidget, reason: '缺失回落接口链路');
+    expect(find.byIcon(Icons.person), findsOneWidget, reason: '缺失 → 默认人像占位');
+  });
+
+  test('进度（§5.12）：初值=目录扫描，每张成功 +1，失败不动', () async {
+    final dir = _tmpDir();
+    addTearDown(() => dir.deleteSync(recursive: true));
+    // 预置 2 张已就绪 + 1 个 .tmp 半成品（不算）
+    File('${dir.path}${Platform.pathSeparator}av-0.png').writeAsBytesSync([1]);
+    File('${dir.path}${Platform.pathSeparator}av-1.png').writeAsBytesSync([1]);
+    File('${dir.path}${Platform.pathSeparator}av-2.png.tmp').writeAsBytesSync([1]);
+    final pool = _pool(dir: dir, size: 4, batchSize: 4, concurrency: 4);
+    await pool.start();
+    final p = pool.progress.value;
+    expect(p.enabled, isTrue);
+    expect(p.filled, 4, reason: '初值 2（tmp 不算）+ 本次成功 2（另 2 格已由预置占用索引）');
   });
 }
+
+const kPng1x1 = [
+  0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 0x00, 0x00, 0x00, 0x0D,
+  0x49, 0x48, 0x44, 0x52, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01,
+  0x08, 0x06, 0x00, 0x00, 0x00, 0x1F, 0x15, 0xC4, 0x89, 0x00, 0x00, 0x00,
+  0x0D, 0x49, 0x44, 0x41, 0x54, 0x78, 0x9C, 0x62, 0x00, 0x01, 0x00, 0x00,
+  0x05, 0x00, 0x01, 0x0D, 0x0A, 0x2D, 0xB4, 0x00, 0x00, 0x00, 0x00, 0x49,
+  0x45, 0x4E, 0x44, 0xAE, 0x42, 0x60, 0x82,
+];

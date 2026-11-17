@@ -19,7 +19,6 @@ import '../../features/theme/tokens.dart';
 import '../../widgets/common.dart';
 import '../../widgets/day_card_avatar.dart';
 import '../../widgets/media_viewer.dart';
-import '../../widgets/net_avatar.dart';
 import 'comments_view.dart';
 
 /// 平滑加权轮询（SWRR，nginx 同款）：每轮取当前权重最大者，选中者扣减总权重、
@@ -46,16 +45,6 @@ List<T> swrrOrder<T>(List<T> pool, {List<int>? weights, int? rounds}) {
   return out;
 }
 
-/// 天卡头像预取清单（晨 15 方案 D）：每个天卡显示首条目的头像 → 收集去重。
-List<String> dayAvatarUrls(List<MapEntry<String, List<DiaryEntry>>> groups) {
-  final out = <String>[];
-  for (final g in groups) {
-    final u = g.value.first.avatarUrl;
-    if (u != null && u.isNotEmpty && !out.contains(u)) out.add(u);
-  }
-  return out;
-}
-
 class FeedPage extends ConsumerStatefulWidget {
   final void Function(HomeTab t) switchTab;
 
@@ -70,7 +59,6 @@ class _FeedPageState extends ConsumerState<FeedPage> {
   final _searchCtrl = TextEditingController();
   bool _searchOpen = false;
   String _kw = '';
-  final _precached = <String>{}; // 已预取的头像 URL（每次同步 URL 换新，按此去重）
 
   // 卡片颜色序列 + 评论头像盐（2026-11-16 用户拍板）：启动/每次刷新重掷——
   // 最新卡片不再恒定同色；SWRR 保证每 8 张覆盖全部 8 色（不饿死），洗牌保证
@@ -129,17 +117,6 @@ class _FeedPageState extends ConsumerState<FeedPage> {
     final groups = groupByDay(visible);
     final hasToday =
         groups.any((g) => g.key == today && g.value.isNotEmpty);
-
-    // 头像预取（晨 15 方案 D，真机反馈头像刷新慢）：同步落库后新 URL 进入本帧——
-    // 立即并行预热全部天卡头像（只预热未取过的）。NetAvatar 构建时命中内存缓存
-    // → 头像与卡片同帧出现；屏外卡片也不再滚动到才拉取。onError 必传：失败走
-    // NetAvatar 占位兜底，不走 FlutterError.reportError（测试环境会判失败）。
-    for (final u in dayAvatarUrls(groups)) {
-      if (_precached.add(u)) {
-        unawaited(precacheImage(NetworkImage(NetAvatar.sized(u, 56)), context,
-            onError: (_, _) {}));
-      }
-    }
 
     // 高亮：session.highlightDate 传入 → 对应卡片仅日期数字变组色
     final hl = state.highlightDate;
@@ -551,14 +528,13 @@ class DayCardBody extends ConsumerWidget {
           padding: const EdgeInsets.fromLTRB(14, 13, 14, 4),
           child: Row(
             children: [
-              // 天卡头像 56（晨 17「再大点」）；晨 18 §2.7 v4：池文件命中走本地
-              // 直读（盐|dateKey 随机取格，刷新换新），缺失回落接口链路。
+              // 天卡头像 56（晨 17「再大点」）；晨 18 §2.7 v4 池命中本地直读；
+              // 晨 19 §5.12 本地化 v5：缺失走默认人像（渲染零网络）。
               Builder(builder: (context) {
                 final pool = ref.watch(avatarPoolProvider);
                 final salt = ref.watch(avatarSaltProvider);
                 return DayCardAvatar(
                   poolPath: pool.pathFor(avatarPoolIndex('$salt|$dateKey')),
-                  url: entries.first.avatarUrl,
                   size: 56,
                 );
               }),

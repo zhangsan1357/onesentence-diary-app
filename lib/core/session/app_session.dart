@@ -177,11 +177,6 @@ class AppSession extends Notifier<AppState> {
   ApiClient _api = ApiClient();
   bool _demo = false;
   bool _flushing = false; // 冲正在途标志（§2.4 并发保护：后台触发与手动刷新互斥）
-  // 后端头像链接（EntryVO.avatar）按 localId 挂内存——客户端只消费不拼装。
-  // 每次同步覆盖更新（后端现生成、每次不同）：用户拍板「刷新后新头像，有新鲜感」
-  //（2026-11-15），故不持久化——重启/刷新后占位，同步完成即换新。
-  final _avatars = <String, String>{};
-
   /// 面容 ID 解锁桥（测试注入假实现）。
   @visibleForTesting
   BioVault bio = BioVaultImpl();
@@ -231,9 +226,10 @@ class AppSession extends Notifier<AppState> {
     if (state.ready) return;
     _demo = _resolveDemo();
 
-    // 头像池后台静默填充（晨 18 §2.7 v4）：无需身份、公开素材，锁屏下也可填；
-    // 失败静默（渲染回落接口链路），不阻塞初始化。
-    unawaited(ref.read(avatarPoolProvider).start());
+    // 头像池后台静默填充（晨 18 §2.7 v4；晨 19 §5.12 进度上报）：真实栈才
+    // 启动（demo/测试环境不启动——进度行显「未启用」，且测试不触网）；失败
+    // 静默（渲染走默认人像），不阻塞初始化。
+    if (!_demo) unawaited(ref.read(avatarPoolProvider).start());
 
     // 同步先用内置种子设置调休（asset/服务端随后异步覆盖），保证首帧数据完整
     final seedHolidays =
@@ -430,7 +426,6 @@ class AppSession extends Notifier<AppState> {
   void lock() {
     if (!state.lockEnabled) return; // 锁定保护关闭：不锁
     _session = null;
-    _avatars.clear();
     _mediaCache.clear(); // 媒体明文缓存随锁清空（P1-4 同款纵深防御）
     // 清空内存明文（P1-4 纵深防御）：解锁后 _loadLocalEntries 从密文重建
     state = state.copyWith(locked: true, entries: const []);
@@ -603,7 +598,6 @@ class AppSession extends Notifier<AppState> {
       await db.kvRemove('api.token');
       await db.kvRemove('api.deviceId');
       await db.kvRemove('sync.cursor');
-      _avatars.clear();
       _mediaCache.clear(); // 媒体明文缓存随注销一并清除
       await db.clearEntries();
       await db.clearPendingMedia(); // 离线队列（暂存媒体）随注销一并清除
@@ -1009,12 +1003,8 @@ class AppSession extends Notifier<AppState> {
       // 本地未同步的改动（离线队列）是最终态：跳过，防云端旧密文覆盖本地新密文
       if (local != null && local.syncState != 0) continue;
       final localId = local?.localId ?? _newLocalId();
-      // 后端头像链接：每次同步覆盖（后端现生成、每次不同 → 刷新后有新鲜感）
-      //（§2.7 v3：天卡必用接口图像；预下载池为后续增强，未实现前维持现链路）
-      final av = se.avatar;
-      if (!se.deleted && av != null && av.isNotEmpty) {
-        _avatars[localId] = av;
-      }
+      // 头像链路本地化 v5（§5.12）：服务端 avatar 字段不再消费（渲染走本地池，
+      // 缺失默认人像），字段仅契约兼容保留
       final cipherJson = jsonEncode({
         'ciphertext': se.ciphertext,
         'nonce_content': se.nonceContent,
@@ -1103,7 +1093,6 @@ class AppSession extends Notifier<AppState> {
             ? null
             : DateTime.fromMillisecondsSinceEpoch(r.createdAtMs),
         deleted: r.deleted,
-        avatarUrl: _avatars[r.localId],
         textPending: parsePendingMeta(r.pendingMeta).text,
         pendingComments: parsePendingMeta(r.pendingMeta).comments,
       ));
@@ -1397,7 +1386,6 @@ class AppSession extends Notifier<AppState> {
         updatedAtMs: now.millisecondsSinceEpoch,
         deleted: true,
       );
-      _avatars.remove(entry.localId);
     }
     _replaceLocal(deleted);
     state = state.copyWith(entries: [...state.entries]);
