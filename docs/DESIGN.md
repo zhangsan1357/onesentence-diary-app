@@ -603,7 +603,13 @@ SwiftUI 版本。现状架构已天然友好（逻辑层纯 Dart、UI 全 Cupert
 5. **live 联调扩展 4 项**（`test/live/integration_live_test.dart`，后端在跑才执行）：
    stats 形状/值断言（建 2 条后 total/streak/heatmap 稀疏+date ASC）、rename（改名→
    新名重注册同 userKey）、rotate（换 userKey 换 token→新 token 建条目）、
-   saveMood/deleteMood（写入回读+删除后消失）。
+   saveMood/deleteMood（写入回读+删除后消失）。**「后端在跑才执行」对全部新增项
+   生效（CI 实测修正）**：CI runner 无后端 → 每项先 `if (api == null) return;`
+   跳过；CI 反馈的另一处实现偏差——stats_sync 置位断言须时序无关（汇聚点在
+   bootstrap 内就可能先置位 stats，不能断「初始为 null」，只断发布+syncNow 后的值）。
+6. **home_widget 平台要求（CI 实测）**：home-widget 要求 iOS ≥ 14.0 → 工程
+   IPHONEOS_DEPLOYMENT_TARGET 13.0 → 14.0（Runner/RunnerTests 全部 configuration；
+   Podfile platform 行保持注释=SPM 优先不受影响）。
 
 **测试映射**：stats_sync_test（解析/syncNow 置位/失败保留/computeStreak 边界 3 类）+
 identity_change_test 不变 + live 4 项。
