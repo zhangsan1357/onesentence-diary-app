@@ -272,7 +272,8 @@
 7. **Widget 数据快照层（`e800081`，§5.5）**：`widget_snapshot_core` 纯函数契约（writtenToday/todayCount/streak/lastText≤60 截断/lastTime/total/updatedAtIso；streak 与 computeStreak 同语义今天未写不断签）+ `home_widget` 门面（iOS 守卫、无 entitlement 静默、注入点测试预留）+ 接线在 `_loadLocalEntries` 尾部（所有数据变化汇聚点；**内容不变跳过**——比较排除 updatedAtIso 时间戳键）。**WidgetKit/App Intents/entitlements 等 Mac 后**（Windows 无法编译 Swift）。测试 4 项（`widget_snapshot_test.dart`）。
 8. 测试 160 项全绿（净增 26），analyze 零告警。
 9. **后端就绪收尾（§5.10，`94f6198` 设计 / `6770498`+`9d16b46` 实现，2026-11-17）**：会话 A 落地 stats/顺序契约/rename/rotate/mood 全部端点后——①**stats 消费**：api_client `stats()`/`StatsResult` 解析 + `AppState.stats`（syncNow 两路径拉取，失败静默保留旧值）+ me/memory 页**服务器优先本地兜底**（标签数仍本地=密文内）。②**身份变更入口打开**（§5.4 约定）：me 页安全组「更改注册名」「更换 12 词主密钥」两行 + 对话框（rotate 成功后新 12 词宫格 barrierDismissible=false 必点「我已抄写」）；原「更换主密钥」行标题澄清为「更换锁定口令」（重包裹封套不换钥，两概念并存需可区分）。③**服务端协议注意三条落地**：rotate 请求临时切回旧钥算 X-Diary-Pass（门先于控制器；失败恢复原值）、续跑改新钥 register 续接不重试 rotate（register 被拒兜底 rotate 一次；`cfg.rotateOldPub` KV 随注销清理）、emoji \uXXXX 标准解析零改动。④**mood color 契约修正**：服务端校验/种子=#RRGGBB hex（≠saveTag 色名）——推送 colorHex→`#RRGGBB` 格式化（原色名反查 live 实测 404）、拉取 `_moodColorOf` hex 优先兼容色名（种子 #34C759 不再落灰兜底）。⑤**定义核对**：streak 服务端（其 DESIGN §6.1.1）与客户端 `computeStreak` 逐字一致（锚点今天→昨天→无；今天没写不断签）零改动测试钉死；heatmap 稀疏格式一致（客户端渲染本就 `counts[date] ?? 0` 自填零值）；服务端 heatmap/perMonth 解析保留暂不消费（客户端已有全量明文索引）。
-10. 测试 **170 项全绿**（净增 30，含 **live 18 项对活后端**），analyze 零告警。**真机验收清单**：天卡排序新语义 / 评论长按菜单 / 媒体查看器+保存相册 / 心情推送自动生效 / 身份变更两入口 / me-memory 页 stats 数字。
+10. 测试 **169 项全绿**（净增 29，含 live 18 项对活后端），analyze 零告警。**真机验收清单**：天卡排序新语义 / 评论长按菜单 / 媒体查看器+保存相册 / 心情推送自动生效 / 身份变更两入口 / me-memory 页 stats 数字。
+11. **CI 反馈修复（2026-11-17）**：①live M3-15~18 补 SKIP 守卫（CI 无后端，约定「后端在跑才执行」对全部 live 项生效——守卫曾被手动注释，已恢复+守卫）；②stats_sync 置位断言时序无关（CI 快机 bootstrap 内就完成首次置位）；③iOS deployment 13.0→14.0（home-widget 平台要求，CI Xcode 实测）；④live 注册统一 429 退避 helper（服务端新限流，本地连跑套件会撞）。
 
 ## 测试清单（`flutter test` 170 项全绿；后端未启动时 live 14 项自动 SKIP——晨 19 后端就绪后 18 项全跑）
 
