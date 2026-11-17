@@ -667,3 +667,43 @@ onboarding/pass_setup、app_session（demo 回退/同步横幅/轮换续跑/地�
 **测试映射**：errors_test（friendlyError 五类映射断言）+ session_error_test
 （setServerBase 全角冒号规范化且持久化 / 非法地址不动现有配置 / 不可达地址
 不抛且横幅友好 / unlock 服务端不可达不抛且 locked=false）+ 全量回归 + live(9060)。
+
+### 5.12 晨 19 真机反馈第二批：头像链路本地化 v5 + 设置页更新进度
+
+**用户拍板**：头像只使用本地（预下载池）头像，本地没有 → 默认人像占位；
+设置端增加头像库更新进度查看。目标=渲染零网络等待（真机头像慢的根治）。
+
+**现状（代码核实）**：§2.7 v4 池命中已走 Image.file 本地直读，但未命中回落
+NetAvatar 网络链路（渲染时逐卡拉取）+ feed build 全量 precacheImage 预热
+（网络）；池无进度上报，设置页不可见。
+
+**设计四条**：
+
+A. **DayCardAvatar 语义改「本地 or 默认人像」**（io/web 条件双实现同步改）：
+   poolPath 有效 → Image.file 本地直读（既有不变）；缺失 → **默认人像占位**
+   （灰圆 + person 图标，视觉复用 NetAvatar 占位、本地绘制零网络零等待）。
+   **删 url 参数与 NetAvatar 回落**——渲染路径不再有任何网络头像。web 实现
+   （池禁用）恒默认人像：Chrome 预览语义=「本地无图」，真机 iOS 池填充后
+   即本地图。评论头像本来就是本地 AnimalAvatar，不受影响。
+
+B. **网络头像链路拆除（因 A 而死的代码一并删）**：feed 删 precacheImage
+   预热循环 + `dayAvatarUrls` + `_precached`；session 删 `_avatars` 内存表
+   （_syncOnce 写入 / lock·注销清理 / 删条目移除 / _loadLocalEntries 回填）；
+   demo_data 删 avatarUrl 生成。`DiaryEntry.avatarUrl` 字段保留（契约文档化，
+   PROGRESS 第 6 条）——客户端不再消费网络头像；`avatarUrl()` 枚举函数保留
+   （池下载仍用）。
+
+C. **池进度上报**：avatar_pool_core 加 `PoolProgress(filled, total, enabled)`
+   纯值类；IO 实现挂 `ValueNotifier<PoolProgress>`——start 时目录一次扫描
+   计初值（文件即进度），fill 循环每张成功 +1 notify；stop 置 running=false；
+   web 实现 enabled=false 恒 (0, size)。纯 Dart 值类在 core，通知器在平台
+   实现层（原生翻译友好约束不变）。
+
+D. **设置页进度行**（me 页配置组「头像库」行，纯查看无 onTap）：
+   ValueListenableBuilder 订阅——『更新中 n/10000』/『已就绪 n/10000』/
+   『未启用』；副语义（仅 Wi-Fi 更新）写进行内注释与文案。
+
+**测试映射**：avatar_pool_test 扩展（进度初值目录扫描 / 下载成功递增 /
+失败不动 / enabled 标记）+ day_card_avatar_test 新增（池命中 Image.file /
+缺失默认人像）+ ui_smoke（天卡默认人像断言改写 + 我的页头像库行）+
+全量回归 + Chrome 功能测试（DEMO=0 真栈）。
