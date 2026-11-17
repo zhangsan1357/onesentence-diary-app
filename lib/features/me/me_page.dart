@@ -6,6 +6,7 @@ import '../../core/api/api_client.dart';
 import '../../core/app_icon.dart';
 
 import '../../core/session/app_session.dart';
+import '../../core/util/errors.dart';
 import '../../features/theme/tokens.dart';
 import '../../widgets/common.dart';
 import 'dialogs.dart';
@@ -160,11 +161,8 @@ class MePage extends ConsumerWidget {
                         }
                       } catch (e) {
                         if (context.mounted) {
-                          showInfoDialog(
-                              context,
-                              '面容 ID 解锁',
-                              '设置失败：'
-                                  '${e.toString().replaceFirst(RegExp(r'^\w+(\([^)]*\))?: '), '')}');
+                          showInfoDialog(context, '面容 ID 解锁',
+                              '设置失败：${friendlyError(e)}');
                         }
                       }
                     },
@@ -208,7 +206,7 @@ class MePage extends ConsumerWidget {
                   }
                 } catch (e) {
                   if (context.mounted) {
-                    showInfoDialog(context, 'Pushover', '发送失败：$e');
+                    showInfoDialog(context, 'Pushover', '发送失败：${friendlyError(e)}');
                   }
                 }
               },

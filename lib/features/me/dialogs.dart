@@ -8,6 +8,7 @@ import '../../core/app_icon.dart';
 import '../../core/config/app_defaults.dart';
 import '../../core/model/diary_entry.dart';
 import '../../core/session/app_session.dart';
+import '../../core/util/errors.dart';
 
 import '../../features/theme/tokens.dart';
 
@@ -63,7 +64,7 @@ class _AppIconDialogState extends State<_AppIconDialog> {
       if (mounted) {
         setState(() {
           _busy = null;
-          _error = '设置失败：$e';
+          _error = '设置失败：${friendlyError(e)}';
         });
       }
     }
@@ -183,7 +184,7 @@ Future<void> showRekeyDialog(BuildContext context, WidgetRef ref) async {
               if (ctx.mounted) Navigator.pop(ctx);
             } catch (e) {
               if (ctx.mounted) {
-                showInfoDialog(ctx, '更换失败', e.toString());
+                showInfoDialog(ctx, '更换失败', friendlyError(e));
               }
             }
           },
@@ -333,8 +334,7 @@ Future<void> showLoginIdentityDialog(
               } catch (e) {
                 if (context.mounted) {
                   ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-                      content: Text('登录失败：'
-                          '${e.toString().replaceFirst(RegExp(r'^\w+(\([^)]*\))?: '), '')}')));
+                      content: Text('登录失败：${friendlyError(e)}')));
                 }
               }
             },
@@ -1061,7 +1061,7 @@ Future<void> showRenameIdentityDialog(BuildContext context, WidgetRef ref) async
             } catch (e) {
               if (ctx.mounted) {
                 Navigator.pop(ctx);
-                showInfoDialog(context, '更改失败', '$e');
+                showInfoDialog(context, '更改失败', friendlyError(e));
               }
             }
           },
@@ -1157,6 +1157,6 @@ Future<void> showRotateIdentityDialog(BuildContext context, WidgetRef ref) async
       ),
     );
   } catch (e) {
-    if (context.mounted) showInfoDialog(context, '更换失败', '$e');
+    if (context.mounted) showInfoDialog(context, '更换失败', friendlyError(e));
   }
 }

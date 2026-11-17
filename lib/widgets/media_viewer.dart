@@ -6,6 +6,7 @@ import 'dart:typed_data';
 import 'package:flutter/material.dart';
 
 import '../core/model/diary_entry.dart';
+import '../core/util/errors.dart';
 import '../core/util/media_save.dart';
 
 class MediaViewer extends StatefulWidget {
@@ -50,7 +51,7 @@ class _MediaViewerState extends State<MediaViewer> {
       await widget.saveBytes(bytes);
       if (mounted) _toast('已保存到相册 ✓');
     } catch (e) {
-      if (mounted) _toast('保存失败：$e');
+      if (mounted) _toast('保存失败：${friendlyError(e)}');
     }
   }
 

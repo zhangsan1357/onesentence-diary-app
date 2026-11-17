@@ -211,9 +211,9 @@ void main() {
     final locked = container.read(appSessionProvider);
     expect(locked.locked, isTrue);
     expect(locked.entries, isEmpty, reason: '锁定后内存不得驻留明文条目');
-    // 解锁（口令解包）→ 重建内存索引
-    await expectLater(session.unlock('123456'), throwsA(anything),
-        reason: '联网部分失败抛出，但本地重建已完成');
+    // 解锁（口令解包）→ 重建内存索引；联网部分失败不抛出、不阻断解锁
+    // （晨 19 §5.11：服务端不可达只转同步横幅）
+    await session.unlock('123456');
     final st = container.read(appSessionProvider);
     expect(st.locked, isFalse);
     expect(st.entries.firstWhere((e) => e.localId == 'e-lock-1').payload.text,

@@ -11,6 +11,7 @@ import 'package:flutter/services.dart';
 import '../../core/api/api_client.dart';
 import '../../core/e2ee/bytes.dart';
 import '../../core/session/recovery_words.dart';
+import '../../core/util/errors.dart';
 import '../theme/tokens.dart';
 
 enum OnboardingMode { create, login, nameOnly }
@@ -119,7 +120,7 @@ class _OnboardingPageState extends State<OnboardingPage> {
     } on ApiException catch (e) {
       setState(() => _error = '服务端：${e.message}');
     } catch (e) {
-      setState(() => _error = '操作失败：$e');
+      setState(() => _error = friendlyError(e));
     } finally {
       if (mounted) setState(() => _busy = false);
     }

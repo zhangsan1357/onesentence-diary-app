@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../core/session/app_session.dart';
+import '../../core/util/errors.dart';
 import '../../features/theme/tokens.dart';
 
 class PassSetupPage extends ConsumerStatefulWidget {
@@ -47,7 +48,7 @@ class _PassSetupPageState extends ConsumerState<PassSetupPage> {
           .read(appSessionProvider.notifier)
           .setLockEnabled(true, passcode: p);
     } catch (e) {
-      if (mounted) setState(() => _error = '开启失败：$e');
+      if (mounted) setState(() => _error = '开启失败：${friendlyError(e)}');
       return;
     } finally {
       if (mounted) setState(() => _busy = false);

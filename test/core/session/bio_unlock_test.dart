@@ -60,8 +60,8 @@ void main() {
     session.lock();
     expect(container.read(appSessionProvider).locked, isTrue);
     // 面容识别（假实现恒通过）→ 钥匙串私钥直取 → 无需口令；
-    // 本地解锁完成后的联网注册/同步在测试环境无后端 → 异常照抛（真机进横幅），不影响解锁态
-    await expectLater(session.unlockBiometric(), throwsA(anything));
+    // 联网注册/同步失败不再抛出（晨 19 §5.11：解锁不被服务端可达性阻断，转同步横幅）
+    await session.unlockBiometric();
     final st = container.read(appSessionProvider);
     expect(st.locked, isFalse);
     expect(st.userId, '面容测试');
@@ -78,8 +78,8 @@ void main() {
     await expectLater(session.unlockBiometric(),
         throwsA(predicate((e) => e.toString().contains('bio-missing'))));
     expect(container.read(appSessionProvider).locked, isTrue);
-    // 口令回退路径仍可用（本地解锁完成；联网部分测试环境抛错不阻断解锁态）
-    await expectLater(session.unlock('123456'), throwsA(anything));
+    // 口令回退路径仍可用（联网部分失败不抛出、不阻断解锁态，晨 19 §5.11）
+    await session.unlock('123456');
     expect(container.read(appSessionProvider).locked, isFalse);
   });
 

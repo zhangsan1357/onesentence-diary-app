@@ -25,6 +25,7 @@ import '../model/diary_entry.dart';
 import '../repo/demo_data.dart';
 import '../util/avatar_pool.dart';
 import '../util/dates.dart';
+import '../util/errors.dart';
 import '../util/widget_snapshot.dart';
 import 'bio_vault.dart';
 import 'crypto_session.dart';
@@ -264,7 +265,7 @@ class AppSession extends Notifier<AppState> {
         locked: false,
         hasKeystore: true,
         entries: demoEntries,
-        serverStatus: '本地库不可用，演示数据（$e）',
+        serverStatus: '本地存储不可用，已切换演示数据',
       );
       unawaited(_loadHolidays());
       return;
@@ -414,8 +415,16 @@ class AppSession extends Notifier<AppState> {
       await _persistKeystore(plainFromSession(session));
     }
     await _loadLocalEntries();
-    await _ensureRegistered();
-    await syncNow();
+    // 服务端不可达不阻断解锁（晨 19 §5.11）：口令已验证、本地内容已解密展示，
+    // 联网注册/同步失败转友好同步横幅（不再抛给锁屏 UI）
+    try {
+      await _ensureRegistered();
+      await syncNow();
+    } catch (_) {
+      _set((s) => s.copyWith(
+            syncError: '服务端暂时连不上 · 内容已本地解密，稍后可手动刷新同步',
+          ));
+    }
   }
 
   void lock() {
@@ -441,7 +450,7 @@ class AppSession extends Notifier<AppState> {
       await syncNow();
     } catch (e) {
       // 后台自举失败不阻塞 UI：错误进同步横幅（syncError），可重试
-      _set((s) => s.copyWith(syncError: e is ApiException ? e.message : '$e'));
+      _set((s) => s.copyWith(syncError: friendlyError(e)));
     }
   }
 
@@ -678,8 +687,16 @@ class AppSession extends Notifier<AppState> {
     if (!ref.mounted) return;
     state = state.copyWith(locked: false);
     await _loadLocalEntries();
-    await _ensureRegistered();
-    await syncNow();
+    // 联网尾段与 unlock 同款（§5.11）：失败转横幅，不抛回锁屏（否则锁屏会
+    // 误显「面容解锁未就绪」——本地解锁其实已完成）
+    try {
+      await _ensureRegistered();
+      await syncNow();
+    } catch (_) {
+      _set((s) => s.copyWith(
+            syncError: '服务端暂时连不上 · 内容已本地解密，稍后可手动刷新同步',
+          ));
+    }
   }
 
   void showToast(String msg) {
@@ -1714,7 +1731,7 @@ class AppSession extends Notifier<AppState> {
       _set((st) => st.copyWith(toast: '主密钥轮换已续完 · 请确认恢复词'));
     } catch (e) {
       // 续跑失败不阻塞会话：条目保持可解（旧私钥暂存还在），下次解锁再续
-      _set((st) => st.copyWith(syncError: '主密钥轮换续跑失败：$e'));
+      _set((st) => st.copyWith(syncError: '主密钥轮换续跑失败：${friendlyError(e)}'));
     }
   }
 
@@ -1724,32 +1741,54 @@ class AppSession extends Notifier<AppState> {
 
   // ---------- 设置 ----------
   /// 服务端地址（客户端配置，不区分构建环境）：所有接口调用拼接此地址。
+  /// 晨 19 §5.11：输入规范化（全角冒号/空格——中文输入法常见误输入）→
+  /// 先校验后写入 → 全程容错给中文提示，任何路径不抛、不透原始异常。
   Future<void> setServerBase(String raw) async {
-    var url = raw.trim();
-    if (url.isEmpty) return;
-    if (!url.startsWith('http://') && !url.startsWith('https://')) {
-      url = 'http://$url';
-    }
-    while (url.endsWith('/')) {
-      url = url.substring(0, url.length - 1);
-    }
-    _api.setBase(url);
-    await _db?.kvSet('api.base', url);
-    await _db?.kvRemove('api.token'); // 新服务端 → 旧 token 作废，解锁后自动重注册
-    state = state.copyWith(
-      serverBase: url,
-      serverStatus: '服务端已切换 · $url',
-      toast: '服务端地址已保存',
-    );
-    final s = _session;
-    if (s != null) {
+    try {
+      var url =
+          raw.trim().replaceAll('：', ':').replaceAll(' ', '');
+      if (url.isEmpty) {
+        state = state.copyWith(serverStatus: '请输入服务端地址');
+        return;
+      }
+      if (!url.startsWith('http://') && !url.startsWith('https://')) {
+        url = 'http://$url';
+      }
+      while (url.endsWith('/')) {
+        url = url.substring(0, url.length - 1);
+      }
+      // 先校验后写入：非法地址不动现有配置
+      try {
+        Uri.parse(url);
+      } catch (_) {
+        state = state.copyWith(serverStatus: '地址格式不对，请检查后重新输入');
+        return;
+      }
+      await _db?.kvSet('api.base', url);
+      await _db?.kvRemove('api.token'); // 新服务端 → 旧 token 作废，解锁后自动重注册
+      _api.setBase(url);
+      state = state.copyWith(
+        serverBase: url,
+        toast: '服务端地址已保存',
+      );
+      final s = _session;
+      if (s == null) {
+        state = state.copyWith(serverStatus: '服务端已切换 · $url');
+        return;
+      }
+      // 可达性探测：失败不回滚（地址已持久化），联网后同步横幅可重试
       try {
         await _register();
         unawaited(_loadHolidays());
         await syncNow();
-      } catch (e) {
-        state = state.copyWith(serverStatus: '新服务端不可达：$e');
+        state = state.copyWith(serverStatus: '服务端已连接 · $url');
+      } catch (_) {
+        state = state.copyWith(
+          serverStatus: '服务端已保存 · 暂时连不上，稍后可重试同步',
+        );
       }
+    } catch (_) {
+      state = state.copyWith(serverStatus: '保存失败，请稍后重试');
     }
   }
 

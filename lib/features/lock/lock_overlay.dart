@@ -8,6 +8,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:local_auth/local_auth.dart';
 
 import '../../core/session/app_session.dart';
+import '../../core/util/errors.dart';
 import '../../features/shell/home_shell.dart';
 import '../../features/theme/tokens.dart';
 
@@ -109,9 +110,9 @@ class _LockOverlayState extends ConsumerState<LockOverlay> {
       _toast('欢迎回来 👋');
       _scheduleAutoLock();
     } catch (e) {
-      setState(() => _error = e.toString().contains('bad-passcode')
-          ? '口令不正确'
-          : '解锁失败：$e');
+      // 错误提示统一友好映射（晨 19 §5.11）：口令错误/本机无身份/其余异常
+      // 均给中文文案，不透原始异常
+      setState(() => _error = friendlyError(e));
     } finally {
       if (mounted) setState(() => _busy = false);
     }

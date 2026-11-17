@@ -12,6 +12,7 @@ import 'package:image_picker/image_picker.dart';
 import '../../core/config/app_defaults.dart';
 import '../../core/model/diary_entry.dart';
 import '../../core/session/app_session.dart';
+import '../../core/util/errors.dart';
 import '../../features/theme/tokens.dart';
 import '../../widgets/common.dart';
 
@@ -164,7 +165,7 @@ class _ComposePageState extends ConsumerState<ComposePage> {
         }
       });
     } catch (e) {
-      _show('录音不可用：$e');
+      _show('录音不可用：${friendlyError(e)}');
     }
   }
 
@@ -205,6 +206,12 @@ class _ComposePageState extends ConsumerState<ComposePage> {
 
   Future<void> _publish() async {
     if (!_canPublish || _publishing) return;
+    // 锁定态守卫（晨 19 §5.11）：compose 路由浮于锁屏覆盖层之上，自动锁触发
+    // 后本页仍可点发布 → 前置拦截给中文提示（不进入发布流程）
+    if (!ref.read(appSessionProvider).unlocked) {
+      _show('会话已锁定，请解锁后再试');
+      return;
+    }
     setState(() => _publishing = true);
     try {
       final media = <MediaInput>[
@@ -232,7 +239,7 @@ class _ComposePageState extends ConsumerState<ComposePage> {
       await ref.read(appSessionProvider.notifier).clearDraft(_draftKey);
       if (mounted) Navigator.of(context).pop();
     } catch (e) {
-      _show(_isEdit ? '保存失败：$e' : '发布失败：$e');
+      _show(_isEdit ? '保存失败：${friendlyError(e)}' : '发布失败：${friendlyError(e)}');
     } finally {
       if (mounted) setState(() => _publishing = false);
     }
@@ -272,13 +279,19 @@ class _ComposePageState extends ConsumerState<ComposePage> {
       notifier.showToast('已删除 ✓');
       if (mounted) Navigator.of(context).pop();
     } catch (e) {
-      if (mounted) _show('删除失败：$e');
+      if (mounted) _show('删除失败：${friendlyError(e)}');
     }
   }
 
   @override
   Widget build(BuildContext context) {
     final b = Theme.of(context).brightness;
+    // 自动锁兜底（晨 19 §5.11）：compose 是全屏路由，浮在 HomeShell 的锁屏
+    // 覆盖层之上——锁定触发即自动 pop，露出其下的锁屏（不再出现「发布页
+    // 悬在锁屏之上」的竞态窗口）
+    ref.listen(appSessionProvider.select((s) => s.locked), (prev, next) {
+      if (next && prev == false && mounted) Navigator.of(context).pop();
+    });
     // 微信式键盘收起（§4.11）：点空白/正文区收起；按钮/chip/输入框等子控件
     // 胜出手势竞技场，行为不受影响（不过敏——只拦空白点按）。
     return GestureDetector(

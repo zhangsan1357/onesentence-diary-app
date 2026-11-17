@@ -275,8 +275,9 @@
 10. 测试 **169 项全绿**（净增 29，含 live 18 项对活后端），analyze 零告警。**真机验收清单**：天卡排序新语义 / 评论长按菜单 / 媒体查看器+保存相册 / 心情推送自动生效 / 身份变更两入口 / me-memory 页 stats 数字。
 11. **CI 反馈修复（2026-11-17）**：①live M3-15~18 补 SKIP 守卫（CI 无后端，约定「后端在跑才执行」对全部 live 项生效——守卫曾被手动注释，已恢复+守卫）；②stats_sync 置位断言时序无关（CI 快机 bootstrap 内就完成首次置位）；③iOS deployment 13.0→14.0（home-widget 平台要求，CI Xcode 实测）；④live 注册统一 429 退避 helper（服务端新限流，本地连跑套件会撞）。
 12. **屏蔽恢复 + 后端契约逐项核对（用户要求，2026-11-17）**：两笔「临时屏蔽」（5164a69 live 四项 / 2dd8023 stats_sync 一项）——live 四项已恢复+守卫；stats_sync「syncNow 成功置位」恢复为时序无关版。核对后端校验规则（RenameRequest 1~64 字符、RotateRequest 64hex、MoodWriteRequest moodKey ^[a-z0-9_]{1,16}$ + emoji @NotBlank≤8 + color #RRGGBB、stats days 1..3660）与客户端实现全部匹配；两处加固——live 退避序列 20s/45s 覆盖 60 秒滑窗（原 5s/10s 跨不过）、_pushMood emoji 空值兜底 📝（@NotBlank）。测试 **170 项全绿**。
+13. **错误提示不外泄 + 锁定态发布竞态 + 地址保存健壮化（§5.11，用户真机反馈，2026-11-18）**：①**"Bad state: locked" 根因**=publish 的 `StateError('locked')` 经 compose `'发布失败：$e'` 上屏；触发链=compose 全屏路由浮于 HomeShell 内锁屏覆盖层之上，自动锁触发后发布页仍可操作。三重修：compose `ref.listen(locked)` 自动 pop 露出锁屏 + `_publish` 前置未解锁守卫（'会话已锁定，请解锁后再试'）+ UI 层 friendlyError 转义。②**地址保存**=setServerBase 无整体容错（全角冒号/空格 → Uri 解析异常静默吞、零反馈）+ 探测失败横幅透原始异常。重写：输入规范化（全角冒号`：`→`:`、去空格）→ 先校验后写入 → 保存成功 toast 诚实反馈 → 探测失败横幅『服务端已保存 · 暂时连不上，稍后可重试同步』。③**`friendlyError(e)` 统一映射**（新 `core/util/errors.dart`，纯 Dart）：ApiException 服务端中文原样 / DioException 按类型（超时/连接失败/网络异常）/ StateError 哨兵（locked/bio-missing/bad-passcode）转文案 / FormatException·ArgumentError message 直取 / 其余一律『操作失败，请稍后重试』——**UI 16 处 `$e` 全部收敛**（compose 3 处、comments_view 3 处、me_page 2 处、lock_overlay、dialogs 5 处、media_viewer、onboarding、pass_setup、app_session 4 处）。④**unlock/unlockBiometric 联网尾段不再抛**（口令验证通过即解锁成功，注册/同步失败转友好同步横幅——服务端不可达不阻断解锁，锁屏也不再误显『面容解锁未就绪』）。测试 **181 项全绿**（净增 11：errors_test 5 项映射 + session_error_test 5 项会话级 + compose 锁定自动 pop widget 测试 1 项；bio_unlock/identity_flow 三处 unlock 抛出断言按新语义改写）。
 
-## 测试清单（`flutter test` 170 项全绿；后端未启动时 live 14 项自动 SKIP——晨 19 后端就绪后 18 项全跑）
+## 测试清单（`flutter test` 181 项全绿；后端未启动时 live 项自动 SKIP，就绪后 18 项全跑）
 
 - **golden 向量 9 项**（`test/core/e2ee/golden_test.dart`，02 §7 固化向量）：Argon2id masterKey、X25519 公钥推导（clamp）、sharedSecret、HKDF encKey、92B EncryptedCEK 字节布局、AES-GCM cipher+tag 布局、完整 JSON fixture 解密、确定性加密复现完整 JSON、随机往返。**一次实现全绿**，Dart 端与 Go 参考实现逐字节互通。
 - **恢复词 7 项**（`test/core/session/recovery_words_test.dart`）：BIP39 黄金向量（熵全 0 短语+seed，Node 互证）、生成多轮校验、抄写错误四类拒绝（换词/缺词/词表外/错序）、空白归一化、hex 判定、**diaryPass 动态口令向量（活后端实测）+窗口边界**。
@@ -302,6 +303,7 @@
 - **统计消费 6 项**（`test/features/stats_sync_test.dart`，2026-11-17 晨 19 收尾）：StatsResult 解析（稀疏 heatmap/date ASC/perMonth/缺字段容错）；syncNow 成功置位 AppState.stats；拉取失败静默保留旧值；computeStreak 边界三类钉死服务端定义（今天写/今天未写昨天写不断签/今天昨天都无=0）。
 - **live 联调 4 项**（`test/live/integration_live_test.dart` M3-15~18，2026-11-17 晨 19 收尾，对活后端）：stats（独立身份建 2 条 → total=2/streak≥1/heatmap 全正数+date ASC+窗口含今天/perMonth 含当月）；rename（改名→新名重注册同 userKey 成功）；rotate（换 userKey 换 token→新 token 新钥建条目）；mood 写删（saveMood #RRGGBB → 回读 → deleteMood 消失）。
 - **Widget 快照 4 项**（`test/features/widget_snapshot_test.dart`，2026-11-17 晨 19）：构建器（今日已写/今日条数/streak 断档/已删不计/最近一句=日期+日内时间最大/lastText 60 字截断）；今天未写不断签；空数据全零；会话接线（汇聚点触发/内容不变跳过排除时间戳键/发布后写入全字段）。
+- **错误提示/地址保存/解锁健壮化 11 项**（`test/core/errors_test.dart` 5 + `test/features/session_error_test.dart` 6，2026-11-18 §5.11）：friendlyError 五类映射（ApiException 原样/DioException 按类型/StateError 哨兵/校验异常 message 直取/未知兜底且不透原始文本）；setServerBase 全角冒号+空格规范化持久化、非法地址（端口含字母）不动现有配置+中文提示、空输入提示、不可达地址不抛+横幅友好（无原始异常文本）、可达时「服务端已连接」；unlock 服务端不可达不抛且锁定解除+横幅友好；compose 自动锁触发自动 pop（widget 级竞态兜底）。
 - **光晕像素采样 2 项**（`test/features/glow_pixel_test.dart`；深色期望改为可见 Δ≥4 ≤48——用户覆盖原版 0.15）。
 - **live 集成 14 项**（`test/live/integration_live_test.dart`）：原 11 项回归（全程隐式验证 X-Diary-Pass）+ M3-12 动态口令 401 + M3-13 多设备共享 + M3-14 冒名拒绝。**2026-11-14 后端 v4 实测 14/14 全绿**（未启动自动 SKIP）。
 

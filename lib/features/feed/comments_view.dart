@@ -16,6 +16,7 @@ import 'dart:async' show unawaited;
 
 import '../../core/model/diary_entry.dart';
 import '../../core/session/app_session.dart';
+import '../../core/util/errors.dart';
 import '../../features/theme/tokens.dart';
 import '../../widgets/animal_avatar.dart';
 import '../../widgets/common.dart' show pendingMark;
@@ -292,7 +293,7 @@ class _CommentsViewState extends ConsumerState<CommentsView> {
           .read(appSessionProvider.notifier)
           .deleteComment(widget.entry, i);
     } catch (err) {
-      if (mounted) _toast('删除失败：$err');
+      if (mounted) _toast('删除失败：${friendlyError(err)}');
     }
   }
 
@@ -306,7 +307,7 @@ class _CommentsViewState extends ConsumerState<CommentsView> {
       if (mounted) setState(() => _editingIndex = null);
     } catch (err) {
       // 失败：编辑框保留，可重试
-      if (mounted) _toast('修改失败：$err');
+      if (mounted) _toast('修改失败：${friendlyError(err)}');
     }
   }
 
@@ -327,7 +328,7 @@ class _CommentsViewState extends ConsumerState<CommentsView> {
       // 失败：输入保留（草稿仍在），可重试
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('评论发送失败：$err')),
+          SnackBar(content: Text('评论发送失败：${friendlyError(err)}')),
         );
       }
     }
