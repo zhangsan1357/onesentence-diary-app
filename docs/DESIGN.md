@@ -613,3 +613,57 @@ SwiftUI 版本。现状架构已天然友好（逻辑层纯 Dart、UI 全 Cupert
 
 **测试映射**：stats_sync_test（解析/syncNow 置位/失败保留/computeStreak 边界 3 类）+
 identity_change_test 不变 + live 4 项。
+
+### 5.11 晨 19 真机反馈：错误提示不外泄 + 锁定态发布竞态 + 服务端地址保存健壮化
+
+**用户反馈**：① 服务端地址无法正常保存；② 连不上服务端时发布报
+"Bad state: locked"（即 bad state lock），无法正常执行；③ **任何原始报错不得暴露
+给前端**，按实际情况给中文提示。
+
+**根因（代码核实）**：
+
+1. **"Bad state: locked"**：`publish()` 在会话未解锁时 `throw StateError('locked')`
+   （app_session）→ compose 页 catch 显示 `'发布失败：$e'` → StateError 文本原样
+   上屏。触发链 = **compose 以 Navigator 全屏路由浮在 HomeShell 内 LockOverlay
+   之上**：锁定保护开启时退后台即锁（main 生命周期），回前台后 compose 页仍可
+   操作（锁屏被压在路由之下看不见），点发布即命中 `_session == null`。
+2. **服务端地址保存**：`setServerBase` 无整体容错——弹窗回调里 pop 后才 await
+   保存，任何异常（典型：中文输入法全角冒号 `：`、地址夹空格 → Uri 解析失败）
+   被静默吞掉，**零反馈**；可达性探测失败还把原始异常写进横幅（`'新服务端不可达：$e'`）。
+3. **外泄面盘点**：unlock 在服务端不可达时把网络异常抛给锁屏（`'解锁失败：$e'`）、
+   同步横幅 `'$e'`、轮换续跑 `'$e'`、demo 回退 `'本地库不可用（$e）'`，以及 UI 层
+   14 处 `'xxx失败：$e'`——全部违反 ③。
+
+**设计三条**：
+
+A. **统一友好错误映射 `friendlyError(e)`**（新文件 `lib/core/util/errors.dart`，
+   纯 Dart 无 UI 依赖，符合原生翻译友好约束 1）：`ApiException` → 服务端中文业务
+   message 原样；`DioException` 按类型分（超时→『连接服务端超时』/连接失败→
+   『无法连接服务端，请检查网络与服务端地址』/其余→『网络异常』）；`StateError`
+   特例（locked→『会话已锁定，请解锁后再试』/bio-missing→『本机未设置面容』）；
+   `FormatException`/`ArgumentError`（客户端校验，消息本身中文）→ 去类名前缀原样；
+   **其余一律『操作失败，请稍后重试』——绝不透出原始异常文本**。
+
+B. **锁定态发布竞态三重修**：① compose `ref.listen` 监听 `locked` 翻转 → 自动
+   pop（露出其下的锁屏覆盖层，发布页不再悬在锁屏之上）；② `_publish` 前置守卫：
+   未解锁 → 提示『会话已锁定，请解锁后再试』直接返回；③ `publish()` 的
+   `StateError('locked')` 保留为防御断言（正常路径不可达），UI 层经 friendlyError
+   转义。锁屏/解锁错误统一 friendlyError（口令错误仍『口令不正确』）。
+
+C. **服务端地址保存健壮化**（`setServerBase`）：输入规范化（全角冒号 `：`→`:`、
+   去所有空格；http(s):// 补全与尾斜杠剥离保持既有）；**先校验后写入**——
+   `Uri.parse` 不过 → 提示『地址格式不对』且不动现有配置；保存成功 toast
+   『服务端地址已保存』（诚实反馈，持久化先行）；可达性探测（register+sync）
+   失败 → 横幅『服务端已保存 · 暂时连不上，稍后可重试同步』（无原始异常）；
+   整体 try/catch 兜底『保存失败，请稍后重试』。**unlock() 收敛**：口令正确即
+   解锁成功，其后的注册/同步失败不再抛出（转友好同步横幅）——服务端不可达
+   不再阻断解锁。
+
+**UI 层外泄面收敛**（全部 `$e` → `friendlyError(e)`）：compose（发布/删除/录音）、
+comments_view（删/改/发 3 处）、me_page（面容设置/Pushover）、lock_overlay、
+me/dialogs（图标/换钥/登录/改名/换主密钥 5 处）、media_viewer（保存）、
+onboarding/pass_setup、app_session（demo 回退/同步横幅/轮换续跑/地址横幅 4 处）。
+
+**测试映射**：errors_test（friendlyError 五类映射断言）+ session_error_test
+（setServerBase 全角冒号规范化且持久化 / 非法地址不动现有配置 / 不可达地址
+不抛且横幅友好 / unlock 服务端不可达不抛且 locked=false）+ 全量回归 + live(9060)。
