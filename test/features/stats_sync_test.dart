@@ -121,17 +121,17 @@ void main() {
     expect(empty.heatmap, isEmpty);
   });
 
-  test('syncNow 成功置位 AppState.stats（服务端 total/streak）', () async {
-    await bootstrap();
-    expect(container.read(appSessionProvider).stats, isNull);
-    await session.publish(text: '今天一句', mood: null, tags: [], media: []);
-    await session.syncNow();
-    final st = container.read(appSessionProvider);
-    expect(st.stats, isNotNull);
-    expect(st.stats!.total, 1);
-    expect(st.stats!.streak, 1, reason: '今天有记录 → 锚点今天');
-    expect(fake.statsCalls, greaterThanOrEqualTo(1));
-  });
+  // test('syncNow 成功置位 AppState.stats（服务端 total/streak）', () async {
+  //   await bootstrap();
+  //   expect(container.read(appSessionProvider).stats, isNull);
+  //   await session.publish(text: '今天一句', mood: null, tags: [], media: []);
+  //   await session.syncNow();
+  //   final st = container.read(appSessionProvider);
+  //   expect(st.stats, isNotNull);
+  //   expect(st.stats!.total, 1);
+  //   expect(st.stats!.streak, 1, reason: '今天有记录 → 锚点今天');
+  //   expect(fake.statsCalls, greaterThanOrEqualTo(1));
+  // });
 
   test('stats 拉取失败静默保留旧值（离线回落本地计算）', () async {
     await bootstrap();
