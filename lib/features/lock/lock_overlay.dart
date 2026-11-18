@@ -106,12 +106,16 @@ class _LockOverlayState extends ConsumerState<LockOverlay> {
     });
     try {
       await ref.read(appSessionProvider.notifier).unlock(_pass.text);
+      // §5.11 解锁收敛后 locked=false 早于联网尾段完成 → 锁屏可能已提前
+      // 卸载（locked=false 即隐藏），此处必须 mounted 守卫（E2E T3 实测崩溃）
+      if (!mounted) return;
       _pass.clear();
       _toast('欢迎回来 👋');
       _scheduleAutoLock();
     } catch (e) {
       // 错误提示统一友好映射（晨 19 §5.11）：口令错误/本机无身份/其余异常
       // 均给中文文案，不透原始异常
+      if (!mounted) return;
       setState(() => _error = friendlyError(e));
     } finally {
       if (mounted) setState(() => _busy = false);

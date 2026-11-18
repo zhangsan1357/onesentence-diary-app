@@ -132,15 +132,23 @@ KeystoreData? readKeystore(String? Function(String key) get) {
 }
 
 /// 口令解锁；口令错误抛 StateError('bad-passcode')。
+/// （晨 19 §5.13 E2E 抓到的真 bug：此前无 try/catch，口令错误实际抛出
+/// cryptography 包的 SecretBoxAuthenticationError——文档哨兵从未兑现，
+/// UI 的『口令不正确』分支恒不命中，用户看到的是泛化错误文案。）
 Future<UnlockedSession> unlockKeystore(
     KeystoreData ks, String passcode) async {
   final salt = b64Decode(ks.saltB64);
   final master = await argon2idKey(passcode, salt);
-  final priv = await aesGcmDecrypt(
-    master,
-    b64Decode(ks.wrapNonceB64),
-    b64Decode(ks.wrappedPrivB64),
-  );
+  final Uint8List priv;
+  try {
+    priv = await aesGcmDecrypt(
+      master,
+      b64Decode(ks.wrapNonceB64),
+      b64Decode(ks.wrappedPrivB64),
+    );
+  } catch (_) {
+    throw StateError('bad-passcode'); // GCM 认证失败 = 口令错误（唯一现实成因）
+  }
   return UnlockedSession(
     keystore: ks,
     privateKey: priv,

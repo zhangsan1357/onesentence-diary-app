@@ -219,4 +219,18 @@ void main() {
     expect(st.entries.firstWhere((e) => e.localId == 'e-lock-1').payload.text,
         text, reason: '解锁后从密文重建内存索引');
   });
+
+  test('unlockKeystore：口令错误 → StateError(bad-passcode) 哨兵（§5.13 E2E 抓到的真 bug）',
+      () async {
+    final phrase = RecoveryWords.generate();
+    await session.createIdentity(phrase, '哨兵测试');
+    await session.setLockEnabled(true, passcode: '123456');
+    session.lock();
+    // 错误口令 → GCM 认证失败被 unlockKeystore 归一为文档哨兵
+    // （此前实抛 SecretBoxAuthenticationError，『口令不正确』分支恒不命中）
+    await expectLater(session.unlock('999999'),
+        throwsA(predicate((e) => e.toString().contains('bad-passcode'))));
+    expect(container.read(appSessionProvider).locked, isTrue,
+        reason: '口令错误不解锁');
+  });
 }

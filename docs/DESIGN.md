@@ -707,3 +707,48 @@ D. **设置页进度行**（me 页配置组「头像库」行，纯查看无 onT
 失败不动 / enabled 标记）+ day_card_avatar_test 新增（池命中 Image.file /
 缺失默认人像）+ ui_smoke（天卡默认人像断言改写 + 我的页头像库行）+
 全量回归 + Chrome 功能测试（DEMO=0 真栈）。
+
+### 5.13 晨 19 追加：功能级 E2E 设施（真实 UI + 真实后端，integration_test）
+
+**动机（用户拍板：做好"功能测试"，不是单元测试）**：功能测试=真实 UI 走全
+流程打真实后端。web 端无头浏览器驱动（integration_test + flutter drive
+-d chrome --headless + chromedriver 157）是可靠通道——浏览器 IAB 内直接
+驱动 Flutter CanvasKit 存在渲染管线冻结（rAF 节流→actionability 永不满足），
+官方语义树+integration_test 通道不依赖画布帧。
+
+**设施三件**：
+1. `test_driver/integration_test.dart`（官方驱动脚本）；
+2. `test/integration/app_flow_test.dart`：后端健康探测（dio 拉调休，
+   **web/VM 通用——dart:io 在 web 编译单元是运行时桩不可作探测**）→
+   未启动整组 SKIP（与 live 约定一致，CI 无后端自动跳过）；
+3. 流程五段：T1 首开注册+口令引导+发布冲正 / T2 重启解锁云端回拉（真实
+   sync）/ T3 评论增改删+编辑条目（真实 replaceEntry）/ T4 服务端地址
+   保存健壮化（§5.11 全角冒号+不可达友好横幅）+头像本地化（§5.12 头像库行）/
+   T5 锁定解锁（真实 Argon2id + 友好错误映射『口令不正确』）。
+
+**过程发现（跨会话对齐项）**：后端 9060 无 CORS 响应头（任何 Origin 都不带
+Access-Control-Allow-Origin）→ Chrome 端全部请求被浏览器拦截（客户端仅见
+"无法连接服务端"友好横幅，符合 §5.11 不外泄约束）→ 已派活后端会话修复
+（Origin 回显 + Authorization/X-Diary-Pass/Content-Type 头 + OPTIONS 预检
+放行），属联调设施不影响 iOS 真机（原生无 CORS 概念）。
+
+**E2E 抓到的真 bug（已修）**：①§5.11 解锁收敛让 `locked=false` 早于联网尾段
+完成 → 锁屏覆盖层提前卸载，`_unlockWithPass` 成功路径的收尾回调
+（_pass.clear/_toast）在已卸载 State 上执行 → `setState() called after
+dispose()`。修复：成功/异常两路径补 `if (!mounted) return;` 守卫
+（_faceUnlock 原有守卫齐全，仅 _unlockWithPass 缺成功路径）。②**口令错误
+哨兵从未兑现**：`unlockKeystore` 无 try/catch，口令错误实际抛 cryptography
+包的 `SecretBoxAuthenticationError`——文档写明 `StateError('bad-passcode')`
+但从未实现，UI『口令不正确』分支恒不命中（用户看到泛化『操作失败』）。
+修复：GCM 认证失败归一为文档哨兵（crypto_session 注明成因）+ 哨兵单测。
+
+**E2E 工程要点**：① onboarding 是 ListView 懒构建——debug 构布局高大于
+视口时折叠线下组件不进树（find.text 找不到/enterText 打进错误字段），
+必须先 `scrollUntilVisible` 入树再交互；② flutter drive web 需
+`--browser-dimension=390,950` 指定视口（默认 800×600）；③ drive 输出管道
+接 grep/tail 会整体缓冲——日志直落文件才能实时观察；④ DWDS 连接偶发
+AppConnectionException——清 chrome/chromedriver 进程重启 chromedriver
+即可恢复。
+
+**测试映射**：app_flow_test 五段流程（后端在跑才执行；chromedriver 157
+随 Chrome 版本配套，本机安装于 /tmp/chromedriver/）。
