@@ -752,3 +752,104 @@ AppConnectionException——清 chrome/chromedriver 进程重启 chromedriver
 
 **测试映射**：app_flow_test 五段流程（后端在跑才执行；chromedriver 157
 随 Chrome 版本配套，本机安装于 /tmp/chromedriver/）。
+
+### 5.14 晨 20 真机反馈第三批：心情全面服务端化 + 换钥口令错位根治 + 头像池未满即显示 + FaceID/口令二选一 + 设置页瘦身 + 日历排版 + 提示语上浮（用户 2026-11-19 拍板）
+
+**① 心情配置全面服务端化（用户：后端有心情增删改查接口且与云端一致，客户端没完全用）**。
+核实：后端 mood 是**全局表**（ConfigService 无 userId 维度，服务端即唯一事实源），
+端点齐全——GET /config/moods（全量）/ POST /config/moods（同 moodKey 幂等更新
+emoji/color）/ POST /config/moods/delete（按 key 物理删，不存在=幂等成功）。客户端
+现状是「本地显示覆盖 + 种子补缺 + 删除名单」的混合模型，云端改了本地不跟。改为：
+
+- **服务端为唯一事实源**：新增 `AppDefaults.serverMoods`（服务端全量列表，sort ASC），
+  `allMoods => serverMoods.isNotEmpty ? serverMoods : moods`（首次拉取前/demo 回落
+  静态种子，行为不变）。_syncCfg 心情段从「补缺合并」改为**全量覆盖** + KV 快照
+  `cfg.moodServer`（离线用上次快照）。
+- **增/改/删全部即时推服务端**（await saveMood/deleteMood）：成功 → 重拉全量覆盖
+  本地；失败 → 不落本地、toast 友好提示「心情修改需联网」——严格云一致，废除
+  moodOverrides/customMoods 本地编辑层与 _deletedMoods 删除名单（KV 旧键随注销清理）。
+- **名称**：服务端 moodKey 为英文（happy/love/angry/surprise/sad/tired，无 name 列）→
+  客户端静态名称映射（现有 AppDefaults.moods 的中文名降级为「key→名称表」保留）；
+  自定义心情 name 服务端无法承载（moodKey 校验 ^[a-z0-9_]{1,16}$）→ **契约缺口 #9**：
+  mood 表加 name 列（可空）+ MoodWriteRequest/MoodVO 增 name——派活后端会话，客户端
+  先兼容（自定义名回落 moodKey，现状不变）。
+- 心情选择胶囊/日历圆点/回忆页渲染全部走 allMoods，零改动自动跟随。
+
+**② 换钥后「同步失败，口令过期」根治（用户：hash 不要用会变动的量）**。
+核实两个事实：(a) hash 输入是**服务端 user 表的 user_key（公钥）不是用户名**——改名
+不改 user_key，改名路径逐行验证安全（rename→keystore→重注册全程口令输入不变）；
+(b) 真正根因是 **rotateIdentity 步骤③的时序 bug**：步骤③（全量重加密逐条
+replaceEntry）前 `_api.otpKey` 已切**新钥**，而服务端此刻还持旧 user_key（rotate
+端点是步骤④）→ 步骤③每个请求 401「动态口令无效」→ 轮换中断 → 续跑路径
+（_resumeRotateIfAny 的 _rotateEntries 同样用新钥 otpKey）同样 401 → 死循环 →
+syncNow 横幅「同步失败，口令过期」。修复（客户端单侧，立即生效）：
+
+- 步骤③期间 `_api.otpKey` **保持旧钥**（=_rotateRegister 既有语义扩展到③）；
+  ④ rotate 成功后才切新钥；异常恢复调用前值（既有逻辑保留）。
+- 续跑同款：_resumeRotateIfAny 在 _rotateEntries 期间临时切旧钥
+  （cfg.rotateOldPub），register 兜底路径不变。
+- **契约缺口 #10（用户拍板方向）**：动态口令 hash 输入改为**终身不变量**——
+  新增 user.pass_key（注册时生成、rename/rotate 均不改；register 请求可选
+  passKey 字段；门验证 pass_key ?? user_key 回退兼容旧客户端）——派活后端
+  会话实现；客户端等后端落地后跟进（keystore 增 passKey、拦截器换输入源），
+  本轮客户端不动口令计算（保持与现后端兼容）。
+
+**③ 头像池未满也要显示（用户：没缓存到 1w 头像仍不显示）**。现状：池未命中的
+索引直接默认人像占位（§5.12 渲染零网络），池后台 Wi-Fi 慢慢填 → 未填到的格子
+全是灰人像。改为**按需网络回落 + 回写池**：
+
+- feed 计算索引后同时取 `pool.pathFor(index)` 与 `pool.urlForIndex(index)`（纯函数
+  = 种子邮箱 → cravatar URL）；DayCardAvatar 收 `url` + `ensure` 回调：
+  池命中 → Image.file（不变）；未命中且 url 非空 → `Image.network` 即时加载
+  （loading/失败仍默认人像）+ initState 触发一次 `ensure`（IO 池下载写入
+  av-{index}.png，下次本地直读；web 实现恒占位不变——cravatar 无 CORS 头，
+  CanvasKit 加载必失败，语义=「本地无图」）。
+- 池后台填充循环、盐重掷、SWRR 语义全部不动（ensure 幂等：已有文件跳过）。
+
+**④ FaceID 与口令二选一（用户：两个取其一即可解锁，也可用 face 改秘钥）**。
+核实：设计本就是二选一（面容通过→钥匙串私钥直解）；「几率两者都要」= 钥匙串
+存档失效（biometryCurrentSet 平台语义：生物特征集变更/系统重置后项自动作废）→
+readPriv null → 回退口令。改两点：
+
+- **自愈**：unlock() 成功路径补「ui.bio=1 且钥匙串存档缺失 → 静默重存当前私钥」
+  ——口令解锁一次后面容恢复可用，无需用户进设置重开。失效文案改为
+  「面容存档已失效 · 请先用口令解锁，之后面容将自动恢复」。
+- **face 改口令**：更换锁定口令弹窗加「使用面容 ID 验证」按钮（bio.available 时
+  显示）——authenticate 通过 + 会话已解锁（私钥本就在内存）→ 免旧口令直接
+  rekeyKeystore 重包裹（rekey 增 bioConfirm 路径）。
+
+**⑤ 设置页删非功能按钮（用户：只要功能性按钮）**：删「端到端加密」行（纯信息
+弹窗）与「多设备共享」行（纯说明弹窗 ④⑤文案）。serverStatus 探测结果并入
+「服务端地址」弹窗（弹窗内实时状态行——E2E probeSettles 改开此弹窗读取）。
+底部「一句话日记 v2 · 端到端加密 · 服务端零明文」脚注一并删除。
+
+**⑥ 我的页排版优化**：随⑤删两行后重分组——安全组（锁定保护/自动上锁/面容 ID
+解锁/更换锁定口令）、身份组（更改注册名/更换 12 词主密钥/新设备登录）、通知组
+（不变）、配置组（服务端地址/标签管理/心情管理/头像库/App 图标）、数据组（导出/
+立即锁定/外观/注销账号）。
+
+**⑦ 日历页下方空（用户：日历 tab 下方有点空）**：底部图例提示行删除（并入②⑧
+的顶部浮窗），底部「本月 N 条 + 心情分布」行升级为统计卡（本月条数/连续天数/
+心情 top3 emoji×n）填充下方空间。
+
+**⑧ 提示语上浮（用户：已同步/加密这类提示放上面浮窗，不要在下面）**：全局
+ToastHost 从底部黑胶囊改为**顶部浮窗**（安全区下悬停，淡入淡出与定时消失逻辑
+不变）——「已同步 ✓」「已加密保存 · 每条独立密钥 ✓」等全部跟随。日历图例移入
+页面顶部（‹ › 行下方小字行），「不塞浮窗组件」——静态说明放顶部即可，动态
+提示（toast）才是浮窗。
+
+**边界**：①的严格云一致意味着离线不能改心情（提示需联网）——自部署单用户
+场景可接受；②的 pass_key 是契约变更，客户端本轮保持 userKey 计算不变（兼容
+现后端），后端落地后第二轮跟进；③真机 iOS 生效（web 占位不变）；④钥匙串
+失效的平台语义无法消除，只能自愈；⑤⑧删除/移动的文案不进任何弹窗保留副本
+（多设备共享 ④⑤说明移入恢复词弹窗顶部一行，防止契约文案丢失）。
+
+**测试映射**：
+| 设计点 | 测试 |
+|---|---|
+| ①心情服务端化 | draft_config_test 心情组重写：全量覆盖（服务端列表胜）/增改删推送后重拉/推送失败不落本地+提示/种子名称映射 |
+| ②换钥口令时序 | identity_change_test：FakeApi 捕获 replaceEntry 时刻 otpKey=旧钥、完成后=新钥；续跑同款断言 |
+| ③头像回落 | avatar_pool_test：urlForIndex 纯函数、ensureIndex 下载写入幂等（fetch 注入）、widget 未命中回调触发 |
+| ④FaceID 自愈/改口令 | bio_unlock_test：unlock 成功且存档缺失→savePriv 被调；rekey bio 路径免旧口令且新口令可解 |
+| ⑤⑥设置页瘦身 | ui_smoke：端到端加密/多设备共享/脚注 findsNothing；身份组行存在；serverStatus 在地址弹窗内 |
+| ⑦⑧排版/上浮 | ui_smoke：日历图例在顶部、底部统计卡渲染；ToastHost 顶部对齐（getTopLeft 断言） |
