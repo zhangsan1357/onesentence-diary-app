@@ -463,9 +463,10 @@ class AppSession extends Notifier<AppState> {
 
   /// 首次启动 · 生成身份（①）：12 恢复词 + 注册名 → 本机 keystore（明文，锁定开关
   /// 默认关闭）→ 注册 + 同步。恢复词校验失败抛 FormatException。
+  /// 校验用 validateImport（§5.15）：生成的词表词走严格分支，自定义 12 段走任意模式。
   Future<void> createIdentity(String wordsPhrase, String userId) async {
     final name = _checkUserId(userId);
-    RecoveryWords.validate(wordsPhrase); // 抛 FormatException → UI 内联展示
+    RecoveryWords.validateImport(wordsPhrase); // 抛 FormatException → UI 内联展示
     final session = await sessionFromIdentity(wordsPhrase, userId: name);
     _session = session;
     _api.otpKey = _passKeyOf(session.keystore);

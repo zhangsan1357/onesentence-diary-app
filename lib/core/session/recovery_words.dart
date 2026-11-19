@@ -57,6 +57,20 @@ class RecoveryWords {
     return sha256Bytes(utf8.encode(canonical));
   }
 
+  /// 创建/导入三态判定（§5.15）：
+  /// ① ≠12 段 → 报错（同 validate）；② 12 段全部是词表词 → 严格 validate
+  /// （校验和检出保留）；③ 含任一非词表段 → 任意模式：12 段非空即可，无校验和
+  /// （seed 由 phraseToSeed 的同一条管线派生）。大小写敏感（输入即密钥）。
+  static void validateImport(String phrase) {
+    final canonical = canonicalPhrase(phrase);
+    if (canonical == null) {
+      throw const FormatException('恢复词需要 12 个词（用空格分隔）');
+    }
+    final allInList = canonical.split(' ').every(wordlist.contains);
+    if (allInList) validate(phrase); // 严格路径：词表组合保留抄写错误检出
+    // 任意模式：12 段非空已由 canonicalPhrase 保证，直接放行
+  }
+
   // ---------- 内部：BIP39 位打包 ----------
 
   static String _phraseFromEntropy(Uint8List ent) {

@@ -58,6 +58,46 @@ void main() {
     expect(RecoveryWords.looksLikeHexKey(RecoveryWords.generate()), isFalse);
   });
 
+  group('validateImport 三态判定（§5.15：12 段任意非空字符串）', () {
+    const arbitrary =
+        'hello world foo bar baz qux quux corge grault garply waldo fred';
+
+    test('含非词表段的 12 段 → 任意模式通过（无校验和）', () {
+      RecoveryWords.validateImport(arbitrary); // 不抛
+    });
+
+    test('任意模式 seed 黄金向量（SHA-256(规范短语)，Python 独立计算）', () {
+      expect(hexEncode(RecoveryWords.phraseToSeed(arbitrary)),
+          '9f165fc0ad6f0bb2b45da369e3f994d5fc514fb73b7d7c96df8474d762457b92');
+    });
+
+    test('全词表但校验和错 → 仍拒绝（词表组合的抄写检出保留）', () {
+      expect(() => RecoveryWords.validateImport('的 的 的 的 的 的 的 的 的 的 的 不'),
+          throwsFormatException);
+    });
+
+    test('全词表且校验和过 → 通过（黄金向量短语）', () {
+      RecoveryWords.validateImport('的 的 的 的 的 的 的 的 的 的 的 在'); // 不抛
+    });
+
+    test('混合 11 词表词 + 1 非词表段 → 任意模式通过', () {
+      RecoveryWords.validateImport('的 的 的 的 的 的 的 的 的 的 的 自创段甲'); // 不抛
+    });
+
+    test('段数 ≠ 12 → 报错（与 validate 同文案）', () {
+      expect(
+          () => RecoveryWords.validateImport('a b c'), throwsFormatException);
+      expect(
+          () => RecoveryWords.validateImport(
+              '的 的 的 的 的 的 的 的 的 的 的 在 多出来的'),
+          throwsFormatException);
+    });
+
+    test('单字段弱密钥放行——长度不做硬限制（用户拍板「任意非空」）', () {
+      RecoveryWords.validateImport('a b c d e f g h i j k l'); // 不抛
+    });
+  });
+
   test('diaryPass 黄金向量（公式已对活后端 curl 实测）', () {
     const key =
         '2bdb0e19c144b01c7214407b7ce8f9c15f40705bcb04184b1917730e4f0bea4d';

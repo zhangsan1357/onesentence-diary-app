@@ -59,4 +59,19 @@ void main() {
     await expectLater(sessionFromIdentity('的 一 是 在 不 了 有 和 人 这 中 大'),
         throwsFormatException); // 12 个真词但校验和不匹配
   });
+
+  test('§5.15 自定义 12 段：确定性——同短语同公钥，大小写敏感', () async {
+    const custom =
+        '自家的 蓝鲸42 hello-world K3y 段落 猫与狗 sunrise7 楼下 密码学 Qw2x 九月 微风';
+    final a = await sessionFromIdentity(custom);
+    final b = await sessionFromIdentity(custom);
+    expect(a.keystore.publicKeyHex, b.keystore.publicKeyHex);
+    // 大小写不同 → 不同身份（输入即密钥，不做大小写折叠）
+    final altered = await sessionFromIdentity(
+        '自家的 蓝鲸42 Hello-world K3y 段落 猫与狗 sunrise7 楼下 密码学 Qw2x 九月 微风');
+    expect(altered.keystore.publicKeyHex, isNot(a.keystore.publicKeyHex));
+    // 与词表短语身份互异（同一管线不同输入）
+    expect(a.keystore.publicKeyHex,
+        isNot((await sessionFromIdentity(_phrase)).keystore.publicKeyHex));
+  });
 }

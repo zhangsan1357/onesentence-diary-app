@@ -1,7 +1,7 @@
 // 首次身份引导（2026-11-14 后端身份模型 v4）：
 // create   = ①首次启动 · 生成身份：12 宫格直接输入恢复词（默认），下方可一键随机生成
 //            + 派生密钥同屏展示 + 注册名（终身不变，多设备共用）
-// login    = ②新设备登录：同一注册名 + 同一份恢复词（或其派生密钥）→ 校验 → 全量同步
+// login    = ②新设备登录：同一注册名 + 同一份身份凭证（12 词/12 段自定义/派生密钥）→ 校验 → 全量同步
 // nameOnly = 存量 keystore 一次性补设注册名（旧版身份接入多设备共享）
 // 身份凭证只在本页出现：创建/登录完成后，应用内任何页面不再显示恢复词与派生密钥。
 // 页面动作经回调注入（main.dart 接线会话层），自身不依赖存储，可独立 widget 测试。
@@ -69,13 +69,10 @@ class _OnboardingPageState extends State<OnboardingPage> {
     setState(() {});
   }
 
-  /// 派生密钥（= 恢复词的 SHA-256 seed hex）：恢复词当前有效才有值。
+  /// 派生密钥（= 恢复词的 SHA-256 seed hex）：12 段非空即显示（§5.15——自定义
+  /// 12 段没有校验和，派生密钥是唯一可核对的等价副本）。
   String? get _derivedKey {
-    try {
-      RecoveryWords.validate(_effectivePhrase);
-    } on FormatException {
-      return null;
-    }
+    if (RecoveryWords.canonicalPhrase(_effectivePhrase) == null) return null;
     return hexEncode(RecoveryWords.phraseToSeed(_effectivePhrase));
   }
 
@@ -173,7 +170,9 @@ class _OnboardingPageState extends State<OnboardingPage> {
         _card(
           b,
           '在下面的 12 宫格内按顺序输入你的 12 个恢复词（或点击「随机生成」）——'
-              '它是你唯一的身份与解密凭证，只保存在本机，不会上传服务器。',
+              '它是你唯一的身份与解密凭证，只保存在本机，不会上传服务器。\n'
+              '也可以输入 12 段自定义字符串（每段非空、区分大小写）：全部是词表词'
+              '时校验和仍生效；自创密钥没有抄写校验保护，请点「复制」保存原文。',
         ),
         const SizedBox(height: 12),
         _wordGrid(b),
@@ -319,14 +318,16 @@ class _OnboardingPageState extends State<OnboardingPage> {
   List<Widget> _loginBody(Brightness b) => [
         _card(
           b,
-          '在新设备输入：同一个注册名 + 同一份 12 词恢复词（或其派生密钥）。'
+          '在新设备输入：同一个注册名 + 同一份身份凭证——12 个词表恢复词、'
+          '或 12 段自定义字符串（空格分隔，区分大小写）、或 64 位派生密钥。'
           '校验通过后本机自动同步全部加密数据并在本地解密。请勿复用旧设备的设备号。',
         ),
         const SizedBox(height: 16),
         _field(b, _name, '注册名'),
         const SizedBox(height: 10),
-        _field(b, _secret, '恢复词（12 词）或派生密钥',
-            hint: '粘贴同一份 12 个恢复词，或 64 位派生密钥', minLines: 3),
+        _field(b, _secret, '恢复词（12 词/12 段自定义）或派生密钥',
+            hint: '粘贴同一份 12 个恢复词或 12 段自定义字符串，或 64 位派生密钥',
+            minLines: 3),
         _errorBox(b),
         const SizedBox(height: 8),
         _primary(b, _busy ? '校验并同步中…' : '导入并同步',

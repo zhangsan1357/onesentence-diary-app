@@ -262,7 +262,7 @@ Future<void> showAutoLockDialog(BuildContext context, WidgetRef ref) async {
   );
 }
 
-/// 新设备登录（②）：同一注册名 + 同一份恢复词（或派生密钥）→ 校验 → 全量同步。
+/// 新设备登录（②）：同一注册名 + 同一份身份凭证（12 词/12 段自定义/派生密钥）→ 校验 → 全量同步。
 /// 服务端校验身份二元组（同 userId 必须同 userKey），拒绝时 SnackBar 展示原因。
 Future<void> showLoginIdentityDialog(
     BuildContext context, WidgetRef ref) async {
@@ -281,7 +281,8 @@ Future<void> showLoginIdentityDialog(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             const Text(
-              '输入同一个注册名 + 同一份 12 词恢复词（或其派生密钥）。'
+              '输入同一个注册名 + 同一份身份凭证——12 个词表恢复词、或 12 段自定义'
+              '字符串（空格分隔，区分大小写）、或其派生密钥。'
               '校验通过后本机自动同步全部加密数据并在本地解密。\n'
               '多设备共享：每台设备独立登录、互不踢下线；数据按注册名共享，'
               '增删改全量同步（每次请求自动附带每 5 分钟一换的动态口令，防令牌冒用）。',
@@ -301,8 +302,8 @@ Future<void> showLoginIdentityDialog(
               maxLines: 4,
               textInputAction: TextInputAction.next,
               decoration: const InputDecoration(
-                labelText: '恢复词（12 词）或派生密钥',
-                hintText: '粘贴同一份 12 个恢复词，或 64 位派生密钥',
+                labelText: '恢复词（12 词/12 段自定义）或派生密钥',
+                hintText: '粘贴同一份 12 个恢复词或 12 段自定义字符串，或 64 位派生密钥',
               ),
             ),
             if (lockEnabled) ...[
@@ -377,7 +378,7 @@ Future<void> showLogoutDialog(BuildContext context, WidgetRef ref) async {
       title: const Text('注销账号'),
       content: const Text(
         '将清除本机身份密钥与全部本地数据索引并退出登录。'
-        '服务端密文保留：凭同一注册名 + 12 词恢复词（或派生密钥）'
+        '服务端密文保留：凭同一注册名 + 12 词恢复词（或 12 段自定义字符串、或派生密钥）'
         '可在登录页重新找回。\n\n'
         '注意：恢复词与派生密钥只在创建时显示过一次，'
         '请确认已在别处妥善保存，否则注销后将无法再进入该身份。',

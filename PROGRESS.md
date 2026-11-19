@@ -297,11 +297,14 @@
 
 17. **M4-a CI 实证出 ipa（2026-11-20，用户 push f78b305 触发）**：GitHub Actions `ios.yml` build-ios run 44570701686（16:50Z）**success**——macos-latest 全链路（analyze/test 门禁 → `flutter build ipa` 未签名 → artifact `diary.ipa`），另两个同 commit 重复 run（16:46/16:47Z）已取消。里程碑表 M4-a 转 ✅；下一步 M4-b：用户在 Actions 页下载 artifact → Sideloadly 自签装真机。无需代码改动。
 
-## 测试清单（`flutter test` 190 项全绿；后端未启动时 live 项自动 SKIP，就绪后 18 项全跑）
+18. **身份支持「12 段任意非空字符串」（§5.15，用户 2026-11-20 拍板，5a844d1 设计先行）**：`RecoveryWords.validateImport` 三态判定——规范短语 ≠12 段报错（不变）/ 12 段全词表走严格 validate（**校验和抄写检出保留**）/ 含任一非词表段走任意模式（12 段非空即可、无校验和；seed = SHA-256(规范短语) 同一管线、黄金向量钉死；**大小写敏感**）。`sessionFromIdentity`/`createIdentity` 接线（首次随机生成行为不变）；onboarding 派生密钥展示放宽为「12 段非空即显」（自定义身份无校验和，派生密钥=唯一可核对等价副本）+ 创建页「自创密钥无校验保护」警示；登录格式描述文案统一（onboarding 登录页 + me 页新设备登录弹窗 + 注销弹窗——设计中写「换钥确认弹窗」，实际第四个描述登录格式的面是注销弹窗，语义一致）；轮换仍**自动生成**词表词（生成=唯一可信熵源，自定义轮换另议）；服务端契约零变化。关键设计论证：仅登录侧放行是死代码（身份只能在本应用创建），创建+登录必须同改。**测试 198 项全绿**（validateImport 三态组 7 + 自定义段确定性 1 净增）、analyze 零告警。
+
+## 测试清单（`flutter test` 198 项全绿；后端未启动时 live 项自动 SKIP，就绪后 18 项全跑）
 
 - **golden 向量 9 项**（`test/core/e2ee/golden_test.dart`，02 §7 固化向量）：Argon2id masterKey、X25519 公钥推导（clamp）、sharedSecret、HKDF encKey、92B EncryptedCEK 字节布局、AES-GCM cipher+tag 布局、完整 JSON fixture 解密、确定性加密复现完整 JSON、随机往返。**一次实现全绿**，Dart 端与 Go 参考实现逐字节互通。
 - **恢复词 7 项**（`test/core/session/recovery_words_test.dart`）：BIP39 黄金向量（熵全 0 短语+seed，Node 互证）、生成多轮校验、抄写错误四类拒绝（换词/缺词/词表外/错序）、空白归一化、hex 判定、**diaryPass 动态口令向量（活后端实测）+窗口边界**。
 - **身份 6 项**（`test/core/session/identity_test.dart`）：同短语同身份、异短语异身份、**hex 导入=短语导入往返**、空白归一化、deviceNo 随机 UUID v4（不复用）、非法输入拒绝。
+- **身份三态 8 项**（`recovery_words_test` validateImport 组 7 + `identity_test` 自定义段 1，2026-11-20 §5.15）：任意 12 段通过 / seed SHA-256 黄金向量（Python 独立计算）/ 全词表校验和错仍拒（抄写检出保留）/ 全词表校验和过通过 / 混合 11 词+1 非词表段通过 / 段数≠12 报错 / 单字段弱密钥放行（长度不设硬限）/ 同自定义短语同公钥+大小写敏感异公钥。
 - **身份流程 11 项**（`test/core/session/identity_flow_test.dart`；2026-11-18 §5.13 增口令错误哨兵 1 项——unlock('999999') 抛 StateError(bad-passcode) 且不解锁）：createIdentity 落盘/校验失败不留痕/注册名 gate、loginIdentity 同词同公钥（跨设备等价）/词校验拒绝、存量补设注册名（deviceNo 保留）、**注销账号（KV 全清 + 状态回引导 + 原词可重登）**、**P1-3 落盘零明文（库行只有密文 + 解密重建）**、**P0-2 needsPass 引导状态机**、**P1-4 lock 清内存明文（解锁后从密文重建）**。MemoryLocalStore 注入（debugUseStore/debugRestorePlainSession/debugReloadEntries 钩子）。
 - **面容解锁 4 项**（`test/core/session/bio_unlock_test.dart`）：启用（生物识别确认 → 私钥入库 + ui.bio）、锁定后面容免口令解锁（bio-missing 回退信号 + 口令回退仍可用）、拒绝启用（识别未过/设备不可用）+ 关闭清除、注销清除钥匙串存档。FakeBioVault 注入。
 - **core 单测 8 项**：tagColor 哈希与 JS 参考实现一致、payload 序列化往返、容错解码、天分组、调休合并/说明行/命中。

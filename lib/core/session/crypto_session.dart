@@ -77,7 +77,9 @@ const keystoreKvKeys = [
 ];
 
 /// 身份文本 → 确定性会话：
-/// 64 位 hex → 直接作为 seed；12 词短语 → 必须通过 BIP39 校验，seed = SHA-256(规范短语)。
+/// 64 位 hex → 直接作为 seed；12 段短语 → 三态判定（§5.15 validateImport）：
+/// 全词表走严格 BIP39 校验，含非词表段走任意模式（12 段非空即可，无校验和），
+/// seed = SHA-256(规范短语)。
 /// deviceNo 每次调用随机生成（createIdentity/loginIdentity 各自落盘一次，此后从 KV 复用）；
 /// userId = 注册名，随 keystore 持久化并携带到注册接口。
 Future<UnlockedSession> sessionFromIdentity(
@@ -90,7 +92,7 @@ Future<UnlockedSession> sessionFromIdentity(
   if (RecoveryWords.looksLikeHexKey(t)) {
     seed = hexDecode(t);
   } else {
-    RecoveryWords.validate(t);
+    RecoveryWords.validateImport(t);
     seed = RecoveryWords.phraseToSeed(t);
   }
   final pair = await x25519KeyPairFromSeed(seed); // 32B seed
