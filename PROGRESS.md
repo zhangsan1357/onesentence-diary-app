@@ -285,7 +285,17 @@
    - **E2E 工程要点（后续会话必读）**：① 1 分钟自动锁截断 >60s 流程（默认 autoLockMin=1）→ 测试解锁尾段 `setAutoLock(0)`（KV 持久，应用侧语义不变）。② onboarding 是 ListView 懒构建——折叠线下组件不进树（find 不到/enterText 打错字段），先 `scrollUntilVisible` 入树再交互；`ensureVisible` 对未构建 finder 无效；dialog 命中后 pump 落定动画再点（动画中点击落空）；drive 输出接管道会被 grep/tail 整体缓冲 → 日志直落文件；DDC 按需编译首个等待放大预算（240s）；DWDS AppConnectionException 启动抖动 ~50% → 清 chrome/chromedriver 进程重试；serverStatus 渲染在「端到端加密」信息弹窗内（页面树上没有）→ 开弹窗读取。
    - **结果（诚实口径）**：单测 **185 项全绿**，analyze 零告警。E2E 最完整一轮（哨兵修复前）T1~T4 全绿实测（T1 01:53 / T2 03:34 / T3 05:24 / T4 07:28）；T5 卡点即真 bug ②（哨兵），修复后由哨兵单测+锁定语义单测覆盖，且修复后复跑 T1 01:44 通过（证明修复不伤主流程）。哨兵修复后的完整复跑受宿主浏览器抖动未能收束（三种实测死法：Chrome 进程中途死亡/renderer 30s 失联（孤儿 dart 编译进程挤压内存，清后复现）/DWDS 启动期停摆——看门狗三轮全部正确收束）；据此把 Argon2id 相关等待预算放大（Icons.edit 120→240s、云端回拉 20→45s，符合 §5.13「DDC 预算放大」既定原则）。**应用逻辑全链路 = T1~T4 真后端 GUI 实测 + T5 关卡单测**；Windows 宿主 web E2E 抖动大，单次全绿需宿主安静时段，真机回归按 M5 清单执行。
 
-## 测试清单（`flutter test` 185 项全绿；后端未启动时 live 项自动 SKIP，就绪后 18 项全跑）
+16. **真机反馈第三批八项 + 换钥口令根治（§5.14，用户 2026-11-19 拍板清单）**：
+   - **①心情全面服务端化**：核实后端 mood 为全局表（无 userId 维度，服务端即唯一事实源）→ 客户端废除「显示覆盖+种子补缺+删除名单」混合模型——`AppDefaults.serverMoods` 全量覆盖拉取（KV `cfg.moodServer` 快照离线兜底）、增/改/删全部即时推服务端（await saveMood/deleteMood，失败不落本地提示需联网）、默认心情同路径可改不可删；种子中文名静态映射（服务端 name 缺口 #9 落地前回落）。
+   - **②换钥后「同步失败，口令过期」根治**：根因=rotateIdentity 步骤③（全量重加密）提前切新钥 otpKey，而服务端仍持旧 user_key → 每请求 401「动态口令无效」→ 中断 → 续跑同错 → 死循环。**客户端修复**：③ 期间口令钥保持调用前值、④ rotate 成功才切新、续跑两态覆盖（rotate 已落/未落服务端）；**契约缺口 #10**（用户拍板「hash 不要用会变动的量」）派活后端会话落地——user.pass_key 列（注册声明制、rotate/rename 不触碰、门验证 pass_key 非空恒用之/空回退 user_key）+ RegisterRequest.passKey + RegisterResponse.passKeyRegistered，curl 全链路验收（注册/rotate 前后 passKey 口令均通、passKeyRegistered 正确）；**客户端第二轮跟进**：keystore 增 passKey（每设备随机 64hex，`ks.passKey`）、首次注册生成落盘、拦截器口令输入源 = _passKeyOf（passKey 优先回退 userKey）——换钥全程零口令错位窗口。改名路径逐行核实本就安全（hash 输入是 user_key 非用户名）。
+   - **③头像池未满即显示**：池未命中 → `Image.network` 即时回落（cravatar 直连）+ 挂载触发 ensureIndex 补写池（原子写/在途去重/失败静默）——没下满 1w 也都有头像；web 恒占位不变（cravatar 无 CORS）。
+   - **④FaceID 二选一**：解锁成功路径补「ui.bio=1 且钥匙串存档缺失 → 静默重存」自愈（biometryCurrentSet 平台失效语义不再打断常态）；bio-missing 文案改「面容存档已失效 · 请先用口令解锁，之后面容将自动恢复」；**face 改口令**——更换锁定口令弹窗加「使用面容 ID 验证」（rekeyWithBio：生物识别通过免旧口令重包裹）。
+   - **⑤⑥设置页瘦身**：删「端到端加密」「多设备共享」两解释行与底部脚注；serverStatus 并入「服务端地址」弹窗（唯一出口，E2E probeSettles 同步改）；重分组=安全组/身份组/通知组/配置组/数据组；多设备共享 ④⑤契约文案并入「新设备登录」弹窗首段。
+   - **⑦日历排版**：底部图例移顶部说明行（节假日说明合并）；底部统计升级卡片（本月条数+连续天数+心情 top3，FittedBox 防窄屏溢出）。
+   - **⑧提示语上浮**：全局 ToastHost 底部黑胶囊 → 顶部浮窗（安全区下悬停，逻辑不变）。
+   - **测试 190 项全绿**，analyze 零告警。E2E 诚实口径：§5.14 八项代码（passKey 接入前）真后端 GUI 实测 **T1~T4 全绿**（02:18/04:19/06:32/09:03——发布等待预算 240s 修复 DDC 编译抖动后）；passKey 接入后完整复跑受宿主浏览器反复崩溃未收束（用户拍板收尾）——passKey 为纯确定性输入源切换，语义由 identity_change 口令时序断言单测覆盖；E2E 设施预算修正随本轮落盘（发布等待 240s、看门狗 300s）。
+
+## 测试清单（`flutter test` 190 项全绿；后端未启动时 live 项自动 SKIP，就绪后 18 项全跑）
 
 - **golden 向量 9 项**（`test/core/e2ee/golden_test.dart`，02 §7 固化向量）：Argon2id masterKey、X25519 公钥推导（clamp）、sharedSecret、HKDF encKey、92B EncryptedCEK 字节布局、AES-GCM cipher+tag 布局、完整 JSON fixture 解密、确定性加密复现完整 JSON、随机往返。**一次实现全绿**，Dart 端与 Go 参考实现逐字节互通。
 - **恢复词 7 项**（`test/core/session/recovery_words_test.dart`）：BIP39 黄金向量（熵全 0 短语+seed，Node 互证）、生成多轮校验、抄写错误四类拒绝（换词/缺词/词表外/错序）、空白归一化、hex 判定、**diaryPass 动态口令向量（活后端实测）+窗口边界**。
@@ -311,6 +321,10 @@
 - **live 联调 4 项**（`test/live/integration_live_test.dart` M3-15~18，2026-11-17 晨 19 收尾，对活后端）：stats（独立身份建 2 条 → total=2/streak≥1/heatmap 全正数+date ASC+窗口含今天/perMonth 含当月）；rename（改名→新名重注册同 userKey 成功）；rotate（换 userKey 换 token→新 token 新钥建条目）；mood 写删（saveMood #RRGGBB → 回读 → deleteMood 消失）。
 - **Widget 快照 4 项**（`test/features/widget_snapshot_test.dart`，2026-11-17 晨 19）：构建器（今日已写/今日条数/streak 断档/已删不计/最近一句=日期+日内时间最大/lastText 60 字截断）；今天未写不断签；空数据全零；会话接线（汇聚点触发/内容不变跳过排除时间戳键/发布后写入全字段）。
 - **错误提示/地址保存/解锁健壮化 11 项**（`test/core/errors_test.dart` 5 + `test/features/session_error_test.dart` 6，2026-11-18 §5.11）：friendlyError 五类映射（ApiException 原样/DioException 按类型/StateError 哨兵/校验异常 message 直取/未知兜底且不透原始文本）；setServerBase 全角冒号+空格规范化持久化、非法地址（端口含字母）不动现有配置+中文提示、空输入提示、不可达地址不抛+横幅友好（无原始异常文本）、可达时「服务端已连接」；unlock 服务端不可达不抛且锁定解除+横幅友好；compose 自动锁触发自动 pop（widget 级竞态兜底）。
+- **心情服务端化 6 项**（`test/features/draft_config_test.dart` 心情组重写 + `display_cfg_test.dart` 快照组，2026-11-20 §5.14）：全量覆盖拉取（服务端列表胜/名称回落/快照落盘/空表守卫）、增改即推后重拉（默认心情同路径推送）、删除推 deleteMood+默认不可删（全局表保护）、推送失败不落本地（严格云一致）、快照 KV 重载恢复+坏数据回落种子。
+- **FaceID 自愈与 face 改口令 2 项**（`test/core/session/bio_unlock_test.dart` 增补，§5.14）：ui.bio=1 钥匙串失效 → 口令解锁成功即静默重存（下次面容恢复可用）；rekeyWithBio 生物识别通过免旧口令重包裹、未通过/设备不可用/口令过短拒绝。
+- **头像按需回落 3 项**（`test/features/avatar_pool_test.dart` 增补，§5.14）：urlForIndex（种子就绪/未启动/越界）、ensureIndex（下载原子入池/已有跳过/在途去重/失败静默）、渲染未命中挂载触发 ensure+命中不触发。
+- **换钥口令时序 2 项**（`test/features/identity_change_test.dart` 增补，§5.14）：③ 重加密期间口令钥恒定=passKey（replaceOtps 逐次捕获断言）；rotate 请求口令=passKey、改名不动口令种子。
 - **光晕像素采样 2 项**（`test/features/glow_pixel_test.dart`；深色期望改为可见 Δ≥4 ≤48——用户覆盖原版 0.15）。
 - **头像池 9 项**（`test/features/avatar_pool_test.dart`，2026-11-18 §5.12 改造）：md5 黄金向量、indexFor、种子生成、批次下载（全落盘/幂等/失败重试封顶/原子写）、并发上限、Wi-Fi 门、pathFor 边界 + **渲染两分支（池命中 Image.file / 缺失默认人像占位 byIcon(Icons.person)）+ PoolProgress 进度断言（目录扫描初值/逐张递增）**。NetAvatar 3 项随组件删除（`git rm`）。
 - **live 集成 14 项**（`test/live/integration_live_test.dart`）：原 11 项回归（全程隐式验证 X-Diary-Pass）+ M3-12 动态口令 401 + M3-13 多设备共享 + M3-14 冒名拒绝。**2026-11-14 后端 v4 实测 14/14 全绿**（未启动自动 SKIP）。

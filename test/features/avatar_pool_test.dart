@@ -192,7 +192,80 @@ void main() {
       ),
     ));
     await tester.pump();
-    expect(find.byIcon(Icons.person), findsOneWidget, reason: '缺失 → 默认人像占位');
+    expect(find.byIcon(Icons.person), findsOneWidget, reason: '缺失无 URL → 默认人像占位');
+  });
+
+  testWidgets('渲染（§5.14）：缺失有回落 URL → 挂载触发 ensure 补池；命中不触发', (tester) async {
+    var ensured = 0;
+    await tester.pumpWidget(MaterialApp(
+      home: Scaffold(
+        body: DayCardAvatar(
+            poolPath: null, url: 'https://x/y.png', ensure: () => ensured++, size: 56),
+      ),
+    ));
+    await tester.pump();
+    expect(ensured, 1, reason: '未命中挂载即补池（fire-and-forget，幂等）');
+    // 命中本地文件 → 不触发
+    await tester.pumpWidget(MaterialApp(
+      home: Scaffold(
+        body: DayCardAvatar(
+            poolPath: '/x/av-0.png', url: 'https://x/y.png', ensure: () => ensured++, size: 56),
+      ),
+    ));
+    await tester.pump();
+    expect(ensured, 1, reason: '池命中零网络零补写');
+  });
+
+  test('urlForIndex（§5.14 按需回落）：种子就绪 → cravatar URL；未启动/越界 → null', () async {
+    final dir = _tmpDir();
+    addTearDown(() => dir.deleteSync(recursive: true));
+    final seeds = List<int>.generate(5, (i) => kQqMin + i); // 已知种子
+    File('${dir.path}${Platform.pathSeparator}seeds.json')
+        .writeAsStringSync(jsonEncode(seeds));
+    final pool = _pool(dir: dir, size: 5, fetch: (_) async => throw Exception('填充失败'));
+    expect(pool.urlForIndex(0), isNull, reason: 'start 前（种子未装载）→ null');
+    await pool.start();
+    expect(pool.urlForIndex(0), avatarPoolUrl('${seeds[0]}@qq.com'));
+    expect(pool.urlForIndex(4), avatarPoolUrl('${seeds[4]}@qq.com'));
+    expect(pool.urlForIndex(5), isNull, reason: '越界');
+    expect(pool.urlForIndex(-1), isNull);
+  });
+
+  test('ensureIndex（§5.14 按需补一张）：下载原子入池 + 已有跳过 + 幂等去重', () async {
+    final dir = _tmpDir();
+    addTearDown(() => dir.deleteSync(recursive: true));
+    final seeds = List<int>.generate(4, (i) => kQqMin + i);
+    File('${dir.path}${Platform.pathSeparator}seeds.json')
+        .writeAsStringSync(jsonEncode(seeds));
+    final urls = <String>[];
+    var failAll = true; // 填充期全失败（池空），按需路径再放开
+    final pool = _pool(
+      dir: dir,
+      size: 4,
+      fetch: (url) async {
+        if (failAll) throw Exception('填充期失败');
+        urls.add(url);
+        if (url == avatarPoolUrl('${seeds[1]}@qq.com')) throw Exception('该格失败');
+        return kPng1x1;
+      },
+      maxAttempts: 1,
+    );
+    await pool.start();
+    expect(pool.pathFor(0), isNull, reason: '填充循环全失败 → 池空');
+    failAll = false;
+    await pool.ensureIndex(0);
+    expect(pool.pathFor(0), isNotNull, reason: '按需下载入池（原子写）');
+    expect(urls, contains(avatarPoolUrl('${seeds[0]}@qq.com')));
+    expect(File(pool.pathFor(0)!).readAsBytesSync(), kPng1x1);
+    final filled = pool.progress.value.filled;
+    // 已有文件 → 直接跳过（不再拉）
+    await pool.ensureIndex(0);
+    expect(urls.where((u) => u == avatarPoolUrl('${seeds[0]}@qq.com')).length, 1,
+        reason: '文件即进度：已入池不重拉');
+    // 失败格 → 静默（不抛、不落盘）
+    await pool.ensureIndex(1);
+    expect(pool.pathFor(1), isNull);
+    expect(pool.progress.value.filled, filled, reason: '失败不计数');
   });
 
   test('进度（§5.12）：初值=目录扫描，每张成功 +1，失败不动', () async {

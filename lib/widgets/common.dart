@@ -414,7 +414,7 @@ class RowPad extends StatelessWidget {
       Padding(padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 11), child: child);
 }
 
-/// 全局 toast（mockup .od2-toast：底部黑胶囊 1.9s）。
+/// 全局 toast（§5.14 提示语上浮：顶部黑胶囊 1.9s——原 mockup 底部位弃用）。
 class ToastHost extends StatefulWidget {
   final String? message;
   final VoidCallback? onDismiss;
@@ -457,12 +457,14 @@ class _ToastHostState extends State<ToastHost> {
 
   @override
   Widget build(BuildContext context) {
+    // 顶部悬浮：状态栏/刘海高度 + 呼吸间距（§5.14 提示语上浮）
+    final topInset = MediaQuery.paddingOf(context).top;
     return IgnorePointer(
       child: AnimatedOpacity(
         opacity: widget.message == null ? 0 : 1,
         duration: const Duration(milliseconds: 300),
         child: Container(
-          margin: const EdgeInsets.only(bottom: 104),
+          margin: EdgeInsets.only(top: topInset + 8),
           padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 10),
           constraints: const BoxConstraints(maxWidth: 320),
           decoration: BoxDecoration(

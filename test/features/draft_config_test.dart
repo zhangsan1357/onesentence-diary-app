@@ -15,7 +15,7 @@ class CfgFakeApi extends ApiClient {
   int nextTagId = 10;
   int nextMoodId = 100;
   final tagSaves = <({String name, String color})>[];
-  final moodSaves = <({String moodKey, String emoji, String color})>[];
+  final moodSaves = <({String moodKey, String emoji, String color, String? name})>[];
   final moodDeletes = <String>[];
   bool failMoodWrite = false; // 推送失败静默验证
   List<TagCfg> serverTags = [];
@@ -27,6 +27,7 @@ class CfgFakeApi extends ApiClient {
     required String deviceNo,
     required String name,
     required String userKeyHex,
+    String? passKey,
   }) async =>
       DeviceRegResult(token: 't-fake', deviceId: 1);
 
@@ -62,20 +63,29 @@ class CfgFakeApi extends ApiClient {
     required String moodKey,
     required String emoji,
     required String color,
+    String? name,
   }) async {
     if (failMoodWrite) throw Exception('端点未上线（404 同型）');
-    moodSaves.add((moodKey: moodKey, emoji: emoji, color: color));
+    moodSaves.add((moodKey: moodKey, emoji: emoji, color: color, name: name));
     final existing = serverMoods.indexWhere((m) => m.moodKey == moodKey);
     if (existing >= 0) {
       final old = serverMoods[existing];
       serverMoods[existing] = MoodCfgServer(
-          moodKey: moodKey, emoji: emoji, color: color, sort: old.sort);
+          moodKey: moodKey,
+          emoji: emoji,
+          color: color,
+          sort: old.sort,
+          name: name ?? old.name);
       return old.sort;
     }
     serverMoods = [
       ...serverMoods,
       MoodCfgServer(
-          moodKey: moodKey, emoji: emoji, color: color, sort: nextMoodId),
+          moodKey: moodKey,
+          emoji: emoji,
+          color: color,
+          sort: nextMoodId,
+          name: name),
     ];
     return nextMoodId++;
   }
@@ -113,8 +123,7 @@ void main() {
     container.dispose();
     AppDefaults.tagPresets = List.of(AppDefaults.defaultTags);
     AppDefaults.tagColorOverrides = {};
-    AppDefaults.moodOverrides = {};
-    AppDefaults.customMoods = const [];
+    AppDefaults.serverMoods = const [];
   });
 
   test('双写·推：新增预设/改色 → saveTag 推当前生效色（同名=更新）', () async {
@@ -157,77 +166,76 @@ void main() {
     expect(jsonDecode(kv['cfg.tagDeleted']!), contains('趣事'));
   });
 
-  test('心情补缺：服务器种子仅填充本地没有的 key，已有 key 不动', () async {
+  test('心情全量覆盖拉取（§5.14 服务端唯一事实源）：serverMoods 替换 + 名称回落 + 快照落盘', () async {
     await bootstrap();
-    AppDefaults.customMoods = [
-      const MoodCfg(key: 'm1', emoji: '🚀', name: '冲', colorHex: 0xFF123456),
-    ];
     fake.serverMoods = [
-      MoodCfgServer(moodKey: 'happy', emoji: '😊', color: 'green', sort: 0),
-      MoodCfgServer(moodKey: 'm9', emoji: '🧘', color: 'blue', sort: 9),
+      const MoodCfgServer(moodKey: 'happy', emoji: '😄', color: '#34C759', sort: 0, name: '超开心'),
+      const MoodCfgServer(moodKey: 'm9', emoji: '🧘', color: 'blue', sort: 9),
     ];
     await session.syncNow();
-    final keys = AppDefaults.customMoods.map((m) => m.key);
-    expect(keys, contains('m9'), reason: '本地没有 → 补缺并入自定义列表');
-    expect(keys, isNot(contains('happy')), reason: '默认 6 心情本地已有 → 不动');
-    expect(AppDefaults.customMoods
-        .where((m) => m.key == 'm1')
-        .single.emoji, '🚀', reason: '本地自定义优先');
+    expect(AppDefaults.allMoods.length, 2, reason: '服务端列表整体覆盖（不再补缺合并）');
+    expect(AppDefaults.moodOf('happy').name, '超开心', reason: '服务端 name 优先（缺口 #9）');
+    expect(AppDefaults.moodOf('happy').emoji, '😄');
+    expect(AppDefaults.moodOf('m9').name, 'm9', reason: '服务端 name 缺失 + 非种子 → key 本身');
+    expect(AppDefaults.moodOf('m9').colorHex, 0xFF007AFF,
+        reason: '非 #RRGGBB hex → 色名反查（blue 在 8 色板内）');
+    final kv = await store.kvAll();
+    expect(kv['cfg.moodServer'], contains('m9'), reason: '快照落盘（离线显示上次数据）');
+    // 空表（异常/清库瞬间）→ 空表守卫不覆盖：保留上次快照（only 未拉取过才回落种子）
+    fake.serverMoods = [];
+    await session.syncNow();
+    expect(AppDefaults.allMoods.length, 2, reason: '空表不覆盖，快照保留');
+    AppDefaults.serverMoods = const []; // 模拟快照缺失（首次启动）
+    expect(AppDefaults.allMoods.length, 6, reason: '无快照 → allMoods 回落静态种子');
   });
 
-  test('双写·推·心情（§5.9/§5.10）：自定义增/改 → saveMood（colorHex→#RRGGBB），默认覆盖不推', () async {
+  test('心情增/改即推（§5.14 唯一写路径）：推送成功后重拉覆盖，默认心情同路径', () async {
     await bootstrap();
     final m = await session.addMood('冲', '🚀', AppDefaults.tagColorHex['blue']!);
     expect(fake.moodSaves.single.moodKey, m.key);
     expect(fake.moodSaves.single.emoji, '🚀');
     expect(fake.moodSaves.single.color,
         matches(RegExp(r'^#[0-9A-Fa-f]{6}$')), reason: 'colorHex → #RRGGBB（服务端契约）');
-    expect(fake.moodSaves.single.color,
-        '#${(AppDefaults.tagColorHex['blue']! & 0xFFFFFF).toRadixString(16).toUpperCase().padLeft(6, '0')}');
-    expect(fake.serverMoods.where((x) => x.moodKey == m.key).single.emoji, '🚀',
-        reason: '同 moodKey=更新幂等');
+    expect(fake.moodSaves.single.name, '冲', reason: 'name 随写请求（缺口 #9 落地即生效）');
+    expect(AppDefaults.serverMoods.map((x) => x.key), contains(m.key),
+        reason: '推送成功 → 重拉服务端列表覆盖本地');
+    expect(AppDefaults.moodOf(m.key).name, '冲');
     await session.updateMood(m.key, '🌟', '冲鸭', AppDefaults.tagColorHex['red']!);
     expect(fake.moodSaves.length, 2);
-    expect(
-        fake.moodSaves.last.moodKey, m.key, reason: '同 moodKey 幂等更新');
+    expect(fake.moodSaves.last.moodKey, m.key, reason: '同 moodKey 幂等更新');
     expect(fake.moodSaves.last.emoji, '🌟');
-    final n = fake.moodSaves.length;
-    await session.updateMood('happy', '😄', '开心改', AppDefaults.tagColorHex['blue']!);
-    expect(fake.moodSaves.length, n, reason: '默认心情显示覆盖不推送（设备本地）');
-    expect(AppDefaults.moodOverrides['happy']!.name, '开心改');
+    expect(AppDefaults.moodOf(m.key).emoji, '🌟');
+    // 默认心情同路径推送（§5.9「本地覆盖不推」语义废除——服务端=唯一事实源）
+    await session.updateMood('happy', '😀', '超开心', AppDefaults.tagColorHex['blue']!);
+    expect(fake.moodSaves.last.moodKey, 'happy');
+    expect(AppDefaults.moodOf('happy').name, '超开心');
+    expect(AppDefaults.moodOf('happy').emoji, '😀');
   });
 
-  test('心情删除名单防复活（§5.9）：删除服务端来源心情 → 拉取不再并入 + 名单持久化', () async {
+  test('心情删除（§5.14）：推 deleteMood + 重拉；默认心情不可删（全局表保护）', () async {
     await bootstrap();
-    fake.serverMoods = [
-      MoodCfgServer(moodKey: 'm77', emoji: '🧘', color: 'blue', sort: 7),
-    ];
-    await session.syncNow();
-    expect(AppDefaults.customMoods.map((m) => m.key), contains('m77'),
-        reason: '先补缺并入');
-    await session.removeMood('m77');
-    expect(AppDefaults.customMoods.map((m) => m.key), isNot(contains('m77')));
-    expect(fake.moodDeletes, ['m77'], reason: '删除推 deleteMood（静默）');
-    final kv = await store.kvAll();
-    expect(jsonDecode(kv['cfg.moodDeleted']!), contains('m77'));
-    await session.syncNow();
-    expect(AppDefaults.customMoods.map((m) => m.key), isNot(contains('m77')),
-        reason: '拉取补缺过滤名单 → 不复活');
+    await session.addMood('临时', '🧪', AppDefaults.tagColorHex['blue']!);
+    final key = fake.moodSaves.single.moodKey;
+    await session.removeMood(key);
+    expect(fake.moodDeletes, [key]);
+    expect(AppDefaults.serverMoods.map((x) => x.key), isNot(contains(key)),
+        reason: '删除成功 → 重拉后本地消失（无删除名单，服务端物理删）');
+    // 默认种子心情拒绝删除（服务端是全局表，删种子影响所有设备）
+    await expectLater(session.removeMood('happy'), throwsFormatException);
+    expect(fake.moodDeletes, [key]);
   });
 
-  test('心情推送失败静默（§5.9）：端点未上线不冒泡、本地照常生效', () async {
+  test('心情推送失败不落本地（§5.14 严格云一致）：addMood/updateMood/removeMood 上抛', () async {
     await bootstrap();
     fake.failMoodWrite = true;
-    final m = await session.addMood('冲', '🚀', AppDefaults.tagColorHex['blue']!);
-    expect(AppDefaults.customMoods.map((x) => x.key), contains(m.key),
-        reason: '本地照常落（推送先行模式）');
-    expect(fake.moodSaves, isEmpty, reason: '失败不记桩');
-    await session.removeMood(m.key);
-    expect(fake.moodDeletes, isEmpty, reason: '删除推失败同样静默');
-    expect(AppDefaults.customMoods.map((x) => x.key), isNot(contains(m.key)));
-    final kv = await store.kvAll();
-    expect(jsonDecode(kv['cfg.moodDeleted']!), contains(m.key),
-        reason: '名单仍持久化（复活防护不依赖端点）');
+    await expectLater(
+        session.addMood('冲', '🚀', AppDefaults.tagColorHex['blue']!), throwsA(anything));
+    expect(AppDefaults.serverMoods.map((x) => x.key), isNot(contains('m')),
+        reason: '失败不落本地（离线不可改，下次联网重试）');
+    await expectLater(
+        session.updateMood('happy', '😀', '超开心', 0), throwsA(anything));
+    expect(AppDefaults.moodOf('happy').emoji, '😊', reason: '改失败 → 服务端值不动');
+    await expectLater(session.removeMood('happy'), throwsFormatException);
   });
 
   test('草稿：保存→读取往返；防抖合并写；清除后为空', () async {

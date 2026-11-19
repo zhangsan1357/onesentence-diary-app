@@ -21,8 +21,9 @@ class FakeApi extends ApiClient {
   final mediaById = <int, List<int>>{};
   final renames = <String>[];
   final rotates = <({String key, String otp})>[]; // key=新 userKey；otp=调用时口令钥
-  final registers = <({String userId, String userKeyHex})>[];
+  final registers = <({String userId, String userKeyHex, String? passKey})>[];
   final replaces = <int>[];
+  final replaceOtps = <String>[]; // §5.14：replace 调用时刻的口令钥（旧钥断言）
   bool online = true;
   bool failRename = false; // 404 同型（端点未上线）
   bool failRotate = false;
@@ -37,8 +38,9 @@ class FakeApi extends ApiClient {
     required String deviceNo,
     required String name,
     required String userKeyHex,
+    String? passKey,
   }) async {
-    registers.add((userId: userId, userKeyHex: userKeyHex));
+    registers.add((userId: userId, userKeyHex: userKeyHex, passKey: passKey));
     return DeviceRegResult(token: 't-${registers.length}', deviceId: 1);
   }
 
@@ -102,6 +104,7 @@ class FakeApi extends ApiClient {
   }) async {
     if (!online) throw _net();
     replaces.add(id);
+    replaceOtps.add(otpKey ?? ''); // 捕获调用时口令钥（§5.14 时序断言）
     serverList = [
       for (final e in serverList)
         if (e.id == id)
@@ -179,6 +182,8 @@ void main() {
     expect(ks.publicKeyHex, oldKey, reason: '改名不动密钥');
     expect(fake.registers.last.userId, '新名字', reason: '重注册带新名');
     expect(fake.registers.last.userKeyHex, oldKey);
+    expect(fake.registers.last.passKey, fake.registers.first.passKey,
+        reason: '§5.14：改名不动口令种子（hash 输入终身不变）');
   });
 
   test('改名失败（端点未上线）→ 零状态变更', () async {
@@ -211,9 +216,14 @@ void main() {
         reason: '返回新 12 词');
     expect(fake.rotates.length, 1, reason: 'rotate 端点一次');
     expect(fake.rotates.single.key, isNot(oldPub), reason: '新 userKey');
-    expect(fake.rotates.single.otp, oldPub,
-        reason: '协议注意 1：rotate 口令必须用旧钥算（门先于控制器）');
+    final passKey = fake.registers.last.passKey!; // 首次注册生成的口令种子
+    expect(fake.rotates.single.otp, passKey,
+        reason: '§5.14：pass_key 已登记 → 门种子恒定，rotate 口令=passKey'
+            '（存量未登记时回退旧 userKey，回退逻辑另有守卫）');
     expect(fake.replaces.length, 2, reason: '两条已上云条目全量重加密');
+    expect(fake.replaceOtps, everyElement(passKey),
+        reason: '③ 重加密期间口令钥恒定=passKey（种子终身不变量——换钥全程'
+            '不产生任何口令错位窗口，「换钥后同步失败口令过期」根治');
 
     // keystore：新身份落盘
     final ks = (await keystoreSession()).keystore;

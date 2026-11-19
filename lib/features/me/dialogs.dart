@@ -172,6 +172,25 @@ Future<void> showRekeyDialog(BuildContext context, WidgetRef ref) async {
       actions: [
         TextButton(
             onPressed: () => Navigator.pop(ctx), child: const Text('取消')),
+        // §5.14「face 改秘钥」：会话已解锁（私钥在内存）+ 生物识别通过 = 免旧口令
+        TextButton(
+          onPressed: () async {
+            if (next.text.length < 6 || next.text != next2.text) {
+              return;
+            }
+            try {
+              await ref
+                  .read(appSessionProvider.notifier)
+                  .rekeyWithBio(next.text);
+              if (ctx.mounted) Navigator.pop(ctx);
+            } catch (e) {
+              if (ctx.mounted) {
+                showInfoDialog(ctx, '面容验证更换失败', friendlyError(e));
+              }
+            }
+          },
+          child: const Text('使用面容 ID 验证'),
+        ),
         TextButton(
           onPressed: () async {
             if (next.text.length < 6 || next.text != next2.text) {
@@ -263,7 +282,9 @@ Future<void> showLoginIdentityDialog(
           children: [
             const Text(
               '输入同一个注册名 + 同一份 12 词恢复词（或其派生密钥）。'
-              '校验通过后本机自动同步全部加密数据并在本地解密。',
+              '校验通过后本机自动同步全部加密数据并在本地解密。\n'
+              '多设备共享：每台设备独立登录、互不踢下线；数据按注册名共享，'
+              '增删改全量同步（每次请求自动附带每 5 分钟一换的动态口令，防令牌冒用）。',
               style: TextStyle(fontSize: 12),
             ),
             const SizedBox(height: 12),
@@ -346,43 +367,6 @@ Future<void> showLoginIdentityDialog(
   );
 }
 
-/// 多设备共享说明（④）+ 关于动态口令（⑤）。
-Future<void> showMultiDeviceDialog(BuildContext context) {
-  return showDialog(
-    context: context,
-    builder: (ctx) => AlertDialog(
-      title: const Text('多设备共享'),
-      content: Column(
-        mainAxisSize: MainAxisSize.min,
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          const Text(
-            '你的日记以端到端加密保存在服务器：服务器只见密文，'
-            '解密密钥与解密结果只存在于你的设备上。每台设备独立登录、互不踢下线；'
-            '数据按注册名共享，增删改全量同步。',
-            style: TextStyle(fontSize: 13, height: 1.6),
-          ),
-          const SizedBox(height: 14),
-          const Divider(height: 1),
-          const SizedBox(height: 14),
-          const Text('关于动态口令',
-              style: TextStyle(fontSize: 13, fontWeight: FontWeight.w700)),
-          const SizedBox(height: 6),
-          const Text(
-            '每次请求会自动附带一个每 5 分钟变化的一次性口令'
-            '（由你的密钥本地推算），防止他人截获令牌后冒用。'
-            '它无需记忆、无需输入，全部自动完成。',
-            style: TextStyle(fontSize: 12, height: 1.6),
-          ),
-        ],
-      ),
-      actions: [
-        TextButton(
-            onPressed: () => Navigator.pop(ctx), child: const Text('知道了')),
-      ],
-    ),
-  );
-}
 
 /// 注销账号（本机）：二次确认后清除身份与本地索引，回到生成身份引导。
 /// 服务端密文保留；恢复词不再展示 → 确认文案强提示先妥善保管。
@@ -737,6 +721,16 @@ Future<void> showServerBaseDialog(BuildContext context, WidgetRef ref) async {
         mainAxisSize: MainAxisSize.min,
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
+          // 连接/探测状态（§5.14：端到端加密信息弹窗删除后，serverStatus 唯一出口）
+          Consumer(builder: (ctx, r, _) {
+            final st = r.watch(appSessionProvider).serverStatus;
+            if (st == null || st.isEmpty) return const SizedBox.shrink();
+            return Padding(
+              padding: const EdgeInsets.only(bottom: 10),
+              child: Text(st,
+                  style: const TextStyle(fontSize: 12, height: 1.4)),
+            );
+          }),
           TextField(
             controller: ctrl,
             keyboardType: TextInputType.url,

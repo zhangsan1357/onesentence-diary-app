@@ -11,6 +11,7 @@ class FakeBio implements BioVault {
   bool avail = true;
   bool authOk = true;
   String? stored;
+  int saves = 0;
 
   @override
   Future<bool> available() async => avail;
@@ -19,7 +20,10 @@ class FakeBio implements BioVault {
   Future<bool> authenticate(String reason) async => authOk;
 
   @override
-  Future<void> savePriv(String privB64) async => stored = privB64;
+  Future<void> savePriv(String privB64) async {
+    stored = privB64;
+    saves++;
+  }
 
   @override
   Future<String?> readPriv() async => stored;
@@ -100,6 +104,39 @@ void main() {
     expect(bio.stored, isNull);
     expect(await store.kvGet('ui.bio'), '0');
     expect(container.read(appSessionProvider).bioUnlock, isFalse);
+  });
+
+  test('§5.14 存档自愈：ui.bio=1 但钥匙串失效 → 口令解锁成功即静默重存', () async {
+    final phrase = RecoveryWords.generate();
+    await session.createIdentity(phrase, '自愈测试');
+    await session.setLockEnabled(true, passcode: '123456');
+    await session.enableBioUnlock(); // 启用（savePriv 第 1 次）
+    final savedFirst = bio.saves;
+    bio.stored = null; // 模拟 biometryCurrentSet 失效（生物特征集变更）
+    session.lock();
+    // 口令解锁（回退路径）→ 成功后自动重存私钥 → 下次面容恢复可用
+    await session.unlock('123456');
+    expect(container.read(appSessionProvider).locked, isFalse);
+    expect(bio.stored, isNotNull, reason: '自愈：口令解锁成功即重存存档');
+    expect(bio.saves, savedFirst + 1);
+  });
+
+  test('§5.14 face 改口令：rekeyWithBio 生物识别通过 → 免旧口令重包裹，新口令可解', () async {
+    final phrase = RecoveryWords.generate();
+    await session.createIdentity(phrase, 'face改钥');
+    await session.setLockEnabled(true, passcode: '123456');
+    await session.rekeyWithBio('654321');
+    session.lock();
+    await session.unlock('654321'); // 新口令可解（旧口令失效的断言在 identity_flow 覆盖）
+    expect(container.read(appSessionProvider).locked, isFalse);
+    // 生物识别未通过 → 拒绝
+    bio.authOk = false;
+    await expectLater(session.rekeyWithBio('999999'), throwsFormatException);
+    bio.authOk = true;
+    bio.avail = false;
+    await expectLater(session.rekeyWithBio('999999'), throwsFormatException);
+    await expectLater(session.rekeyWithBio('123'), throwsFormatException,
+        reason: '口令长度校验先于生物识别');
   });
 
   test('注销账号：钥匙串存档与 ui.bio 一并清除', () async {

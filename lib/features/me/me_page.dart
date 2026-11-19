@@ -91,7 +91,7 @@ class MePage extends ConsumerWidget {
             ],
           ),
           const SizedBox(height: 20),
-          // 安全组
+          // 安全组（§5.14 重分组：锁定/解锁语义归一组）
           IosGroup(children: [
             IosRow(
               icon: Icons.enhanced_encryption_outlined,
@@ -108,34 +108,6 @@ class MePage extends ConsumerWidget {
                   await notifier.setLockEnabled(false);
                 }
               },
-            ),
-            IosRow(
-              icon: Icons.verified_user_outlined,
-              iconBg: const Color(0xFF0A84FF),
-              title: '端到端加密',
-              value: '已开启',
-              valueColor: Tokens.green,
-              onTap: () => showInfoDialog(context, '端到端加密',
-                  '服务端只见密文。私钥不出设备：Argon2id(口令, 盐) 派生主密钥包裹私钥，盐不上传。\n${state.serverStatus ?? ''}'),
-            ),
-            IosRow(
-              icon: Icons.badge_outlined,
-              iconBg: const Color(0xFF0A84FF),
-              title: '更改注册名',
-              value: state.userId,
-              onTap: () => showRenameIdentityDialog(context, ref),
-            ),
-            IosRow(
-              icon: Icons.vpn_key_outlined,
-              iconBg: const Color(0xFFFF9500),
-              title: '更换 12 词主密钥',
-              onTap: () => showRotateIdentityDialog(context, ref),
-            ),
-            IosRow(
-              icon: Icons.key,
-              iconBg: const Color(0xFF5E5CE6),
-              title: '更换锁定口令',
-              onTap: () => showRekeyDialog(context, ref),
             ),
             IosRow(
               icon: Icons.timer_outlined,
@@ -169,17 +141,32 @@ class MePage extends ConsumerWidget {
                     },
             ),
             IosRow(
+              icon: Icons.key,
+              iconBg: const Color(0xFF5E5CE6),
+              title: '更换锁定口令',
+              onTap: () => showRekeyDialog(context, ref),
+            ),
+          ]),
+          // 身份组（§5.14 重分组：注册名/主密钥/新设备）
+          IosGroup(children: [
+            IosRow(
+              icon: Icons.badge_outlined,
+              iconBg: const Color(0xFF0A84FF),
+              title: '更改注册名',
+              value: state.userId,
+              onTap: () => showRenameIdentityDialog(context, ref),
+            ),
+            IosRow(
+              icon: Icons.vpn_key_outlined,
+              iconBg: const Color(0xFFFF9500),
+              title: '更换 12 词主密钥',
+              onTap: () => showRotateIdentityDialog(context, ref),
+            ),
+            IosRow(
               icon: Icons.login,
               iconBg: const Color(0xFF34C759),
               title: '新设备登录',
               onTap: () => showLoginIdentityDialog(context, ref),
-            ),
-            IosRow(
-              icon: Icons.devices_outlined,
-              iconBg: const Color(0xFF30B0C7),
-              title: '多设备共享',
-              value: '说明',
-              onTap: () => showMultiDeviceDialog(context),
             ),
           ]),
           // 通知组
@@ -291,15 +278,6 @@ class MePage extends ConsumerWidget {
               onTap: () => showLogoutDialog(context, ref),
             ),
           ]),
-          Padding(
-            padding: const EdgeInsets.only(top: 4),
-            child: Center(
-              child: Text(
-                '一句话日记 v2 · 端到端加密 · 服务端零明文',
-                style: TextStyle(fontSize: 11, color: Tokens.label3(b)),
-              ),
-            ),
-          ),
           const SizedBox(height: 8),
         ],
       ),

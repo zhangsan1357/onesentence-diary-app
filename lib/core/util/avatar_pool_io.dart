@@ -22,8 +22,15 @@ abstract class AvatarPool {
   /// 停止循环（生命周期/测试）。
   void stop();
 
-  /// 文件存在 → 绝对路径（同步 exists，µs 级）；否则 null（渲染走默认人像）。
+  /// 文件存在 → 绝对路径（同步 exists，µs 级）；否则 null（渲染走网络回落/默认人像）。
   String? pathFor(int index);
+
+  /// 该索引对应的图像 URL（§5.14 按需网络回落；种子未就绪/平台无池 → null）。
+  String? urlForIndex(int index);
+
+  /// 按需补一张（§5.14）：已有文件跳过；下载原子写入池。失败静默（渲染层
+  /// Image.network 已兜底显示，本地只做缓存加速）。web 无池 → no-op。
+  Future<void> ensureIndex(int index);
 
   /// 池进度（§5.12 设置页查看）。
   ValueNotifier<PoolProgress> get progress;
@@ -123,6 +130,46 @@ class IoAvatarPool implements AvatarPool {
     if (dir == null || index < 0 || index >= size) return null;
     final p = '${dir.path}${Platform.pathSeparator}av-$index.png';
     return File(p).existsSync() ? p : null;
+  }
+
+  /// §5.14 按需回落 URL：种子就绪才有意义（未启动/目录异常 → null → 渲染占位）。
+  @override
+  String? urlForIndex(int index) {
+    final seeds = _seeds;
+    if (seeds == null || index < 0 || index >= size) return null;
+    return avatarPoolUrl('${seeds[index]}@qq.com');
+  }
+
+  /// §5.14 按需补一张（渲染未命中时由 UI 触发一次）：文件即进度跳过、原子写、
+  /// 在途去重（同时挂多张同索引卡不重复下载）；失败静默。
+  final _inflight = <int>{};
+  Future<void> _pending = Future.value();
+
+  @override
+  Future<void> ensureIndex(int index) async {
+    if (_dir == null || _seeds == null || index < 0 || index >= size) return;
+    if (pathFor(index) != null) return; // 文件即进度
+    if (!_inflight.add(index)) return;
+    _pending = _pending.then((_) async {
+      if (_stopped) return;
+      if (pathFor(index) != null) return; // 填充循环可能已抢先
+      final f = File(
+          '${_dir!.path}${Platform.pathSeparator}av-$index.png');
+      try {
+        final bytes = await fetch(urlForIndex(index)!)
+            .timeout(const Duration(seconds: 8));
+        if (bytes.isEmpty) throw const FormatException('空图');
+        final tmp = File('${f.path}.tmp');
+        await tmp.writeAsBytes(bytes, flush: true);
+        await tmp.rename(f.path); // 原子写
+        _bumpFilled(_countFilled(_dir!));
+      } catch (_) {
+        // 失败静默：渲染层网络兜底已在显示，下次挂载/填充循环再试
+      } finally {
+        _inflight.remove(index);
+      }
+    });
+    await _pending;
   }
 
   /// 种子清单：seeds.json 持久化（二次启动复用，不重生成——随机调用的取值空间

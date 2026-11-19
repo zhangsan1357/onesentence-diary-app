@@ -19,6 +19,10 @@ class KeystoreData {
   final String deviceNo; // 每设备随机 UUID v4（不复用旧设备号）
   final String userId; // 注册名（终身不变；空 = 存量 keystore 待补设）
   final String recoveryCode; // 身份文本（12 词短语或派生密钥 hex，用户保管）
+  // 口令终身种子（§5.14 契约缺口 #10，每设备随机 64hex、注册时声明）：
+  // 动态口令 X-Diary-Pass 的输入源——换 12 词主密钥（rotate）/改注册名均不变，
+  // 根治「换钥后口令过期无法同步」。空 = 存量 keystore 未登记（下次注册生成）。
+  final String passKey;
 
   const KeystoreData({
     required this.saltB64,
@@ -28,6 +32,7 @@ class KeystoreData {
     required this.deviceNo,
     required this.userId,
     required this.recoveryCode,
+    this.passKey = '',
   });
 }
 
@@ -50,6 +55,7 @@ const _kvPub = 'ks.pub';
 const _kvDeviceNo = 'ks.deviceNo';
 const _kvUserId = 'ks.userId';
 const _kvRecovery = 'ks.recovery';
+const _kvPassKey = 'ks.passKey';
 
 String kvSalt = _kvSalt;
 String kvWrapped = _kvWrapped;
@@ -67,6 +73,7 @@ const keystoreKvKeys = [
   'ks.deviceNo',
   'ks.userId',
   'ks.recovery',
+  'ks.passKey',
 ];
 
 /// 身份文本 → 确定性会话：
@@ -97,6 +104,7 @@ Future<UnlockedSession> sessionFromIdentity(
     deviceNo: deviceNo ?? _newUuid(),
     userId: userId,
     recoveryCode: t,
+    // passKey 留空：注册时生成（_register 统一入口），避免本函数依赖随机源语义
   );
   return UnlockedSession(keystore: ks, privateKey: priv, publicKey: pub);
 }
@@ -128,6 +136,7 @@ KeystoreData? readKeystore(String? Function(String key) get) {
     deviceNo: get(_kvDeviceNo) ?? '',
     userId: get(_kvUserId) ?? '',
     recoveryCode: get(_kvRecovery) ?? '',
+    passKey: get(_kvPassKey) ?? '',
   );
 }
 
@@ -179,6 +188,7 @@ KeystoreData plainFromSession(UnlockedSession s) => KeystoreData(
       deviceNo: s.keystore.deviceNo,
       userId: s.keystore.userId,
       recoveryCode: s.keystore.recoveryCode,
+      passKey: s.keystore.passKey,
     );
 
 /// 更换主密钥：仅重包裹私钥封套，数据零重加密（03 §2.2 第 6 条）。
@@ -196,6 +206,7 @@ Future<KeystoreData> rekeyKeystore(
     deviceNo: session.keystore.deviceNo,
     userId: session.keystore.userId,
     recoveryCode: session.keystore.recoveryCode,
+    passKey: session.keystore.passKey,
   );
 }
 
@@ -208,4 +219,5 @@ Map<String, String> keystoreToKv(KeystoreData ks) => {
       _kvDeviceNo: ks.deviceNo,
       _kvUserId: ks.userId,
       _kvRecovery: ks.recoveryCode,
+      _kvPassKey: ks.passKey,
     };

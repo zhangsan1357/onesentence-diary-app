@@ -1,5 +1,7 @@
 // 标签/心情显示配置：增删改查 + KV 持久化 + 重载（debugLoadCfg）。
 // MemoryLocalStore 注入（debugUseStore），无网络依赖；静态表在 setUp/tearDown 复位。
+import 'dart:convert';
+
 import 'package:diary_app/core/config/app_defaults.dart';
 import 'package:diary_app/core/db/database.dart';
 import 'package:diary_app/core/session/app_session.dart';
@@ -10,8 +12,7 @@ import 'package:flutter_test/flutter_test.dart';
 void _resetDefaults() {
   AppDefaults.tagColorOverrides = {};
   AppDefaults.tagPresets = List.of(AppDefaults.defaultTags);
-  AppDefaults.moodOverrides = {};
-  AppDefaults.customMoods = const [];
+  AppDefaults.serverMoods = const [];
 }
 
 void main() {
@@ -69,36 +70,37 @@ void main() {
     expect(AppDefaults.tagColor('工作'), auto, reason: '非法色名不入覆盖表');
   });
 
-  test('心情：新增/编辑/删除 + 默认心情仅改显示（key 稳定）+ KV 重载', () async {
+  test('心情快照（§5.14 服务端唯一事实源）：KV 重载恢复 serverMoods + 名称回落 + moodOf 语义', () async {
+    // 未拉取/快照缺失 → allMoods 回落静态种子（首启与 demo 语义不变）
     expect(AppDefaults.allMoods.length, 6);
-    final m = await session.addMood('拼劲', '🚀', 0xFF007AFF);
-    expect(AppDefaults.allMoods.length, 7);
-    expect(AppDefaults.moodOf(m.key).name, '拼劲');
-    // 编辑自定义
-    await session.updateMood(m.key, '🔥', '热血', 0xFFFF3B30);
-    expect(AppDefaults.moodOf(m.key).name, '热血');
-    expect(AppDefaults.moodOf(m.key).emoji, '🔥');
-    // 编辑默认心情 → 覆盖表（key 不变，历史条目照常渲染）
-    await session.updateMood('happy', '😀', '超开心', 0xFF34C759);
-    expect(AppDefaults.moodOf('happy').name, '超开心');
-    expect(AppDefaults.moodOf('happy').emoji, '😀');
-    // 模拟重启：清静态 → 同库重载恢复
-    AppDefaults.customMoods = const [];
-    AppDefaults.moodOverrides = {};
+    expect(AppDefaults.moodOf('happy').name, '开心');
+    // 写入服务端快照（_pullMoods 成功后的落盘形态）→ 重载恢复
+    await store.kvSet('cfg.moodServer', jsonEncode([
+      {'key': 'happy', 'emoji': '😄', 'name': '超开心', 'colorHex': 0xFF34C759},
+      {'key': 'm1', 'emoji': '🚀', 'name': '冲', 'colorHex': 0xFF007AFF},
+    ]));
     await session.debugLoadCfg();
-    expect(AppDefaults.moodOf(m.key).name, '热血');
+    expect(AppDefaults.allMoods.length, 2, reason: '服务端列表=唯一事实源（覆盖式）');
     expect(AppDefaults.moodOf('happy').name, '超开心');
-    // 删除自定义心情；默认心情不可删（removeMood 只作用于自定义表）
-    await session.removeMood(m.key);
-    expect(AppDefaults.customMoods, isEmpty);
-    expect(AppDefaults.moodOf('happy').name, '超开心');
-    await session.removeMood('happy');
-    expect(AppDefaults.moodOverrides.containsKey('happy'), isTrue);
-    // 未知 key 兜底（原 moodOf orElse 行为）
+    expect(AppDefaults.moodOf('happy').emoji, '😄');
+    expect(AppDefaults.moodOf('m1').name, '冲');
+    // 种子名回落：服务端 name 缺失（缺口 #9 落地前）→ 静态表中文名
+    expect(AppDefaults.moodNameOf('happy'), '开心');
+    expect(AppDefaults.moodNameOf('happy', serverName: ''), '开心');
+    expect(AppDefaults.moodNameOf('happy', serverName: '超开心'), '超开心');
+    expect(AppDefaults.moodNameOf('m9'), 'm9', reason: '非种子 key 回落 key 本身');
+    // 清空静态 → 重载仍恢复（快照是重启恢复路径）
+    AppDefaults.serverMoods = const [];
+    await session.debugLoadCfg();
+    expect(AppDefaults.allMoods.length, 2);
+    // 坏快照 → 按缺失处理 → 回落种子
+    await store.kvSet('cfg.moodServer', 'not-json');
+    AppDefaults.serverMoods = const [];
+    await session.debugLoadCfg();
+    expect(AppDefaults.serverMoods, isEmpty);
+    expect(AppDefaults.allMoods.length, 6);
+    // 未知 key 兜底（原 moodOf orElse 行为不变）
     expect(AppDefaults.moodOf('nope').key, 'tired');
-    // 名称校验
-    await expectLater(session.addMood('  ', '🚀', 0), throwsFormatException);
-    await expectLater(session.addMood('长' * 9, '🚀', 0), throwsFormatException);
   });
 
   test('cfgVersion：每次配置变更自增（驱动观察 AppState 的 UI 重建）', () async {

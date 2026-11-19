@@ -44,16 +44,15 @@ Future<void> pumpUntil(WidgetTester tester, Finder finder,
   expect(ok(), isTrue, reason: '等待超时');
 }
 
-/// 地址探测横幅读取（返回实际横幅类型）——一次跑内多次 register 可能撞
+/// 地址探测状态读取（返回实际状态类型）——一次跑内多次 register 可能撞
 /// 60 秒滑窗限流，429 → 『暂时连不上』也属正确友好行为。serverStatus 渲染
-/// 在「端到端加密」信息弹窗里（页面树上没有）→ 等探测收束（可达 1~2s /
-/// 不可达 connect 超时 5s）→ 滚到安全组 → 开弹窗读取 → 关闭后返回。
+/// 在「服务端地址」弹窗内（§5.14：端到端加密信息行已删，状态唯一出口）→
+/// 等探测收束（可达 1~2s / 不可达 connect 超时 5s）→ 重开弹窗读取 → 取消。
 Future<String> probeSettles(WidgetTester tester) async {
   await tester.pump(const Duration(seconds: 6)); // register 探测收束
-  await tester.scrollUntilVisible(find.text('端到端加密'), -160,
-      scrollable: find.byType(Scrollable).first);
-  await tester.pump(const Duration(milliseconds: 300));
-  await tester.tap(find.text('端到端加密'));
+  await tester.tap(find.text('服务端地址'), warnIfMissed: false);
+  await pumpUntil(tester, find.text('保存'), maxSeconds: 6);
+  await tester.pump(const Duration(milliseconds: 500)); // 弹窗开屏动画落定
   await pumpUntil(
       tester,
       find.textContaining('服务端已连接'),
@@ -62,7 +61,7 @@ Future<String> probeSettles(WidgetTester tester) async {
   final which = find.textContaining('服务端已连接').evaluate().isNotEmpty
       ? '已连接'
       : '暂时连不上';
-  await tester.tap(find.text('知道了'));
+  await tester.tap(find.text('取消'));
   await tester.pump(const Duration(milliseconds: 400));
   return which;
 }
@@ -144,7 +143,9 @@ void main() {
 
     // 发布：FAB → 正文 → 发布 → 回时光流出现条目
     await tester.tap(find.byIcon(Icons.edit));
-    await pumpUntil(tester, find.text('发布'));
+    await tester.pump(const Duration(milliseconds: 400)); // 路由动画落定再等
+    // compose 首次挂载触发 DDC 按需编译（单次可卡 30~90s，宿主有并行负载时更久）
+    await pumpUntil(tester, find.text('发布'), maxSeconds: 240);
     await tester.enterText(
         find.widgetWithText(TextField, '今天怎么样？写点什么……'), '功能测试条目A$runId');
     await tester.pump(const Duration(milliseconds: 200));

@@ -84,26 +84,28 @@ class AppDefaults {
     MoodCfg(key: 'tired', emoji: '😴', name: '疲惫', colorHex: 0xFF8E8E93),
   ];
 
-  /// 默认心情的显示覆盖（心情管理编辑，key → 完整 MoodCfg；设备本地 KV）。
-  static Map<String, MoodCfg> moodOverrides = {};
+  /// 服务端心情列表（§5.14 全面服务端化：后端 mood 全局表=唯一事实源，sort ASC；
+  /// 会话层拉取覆盖 + KV 快照离线兜底）。空 = 未拉取/服务端空表 → 回落静态种子。
+  static List<MoodCfg> serverMoods = const [];
 
-  /// 用户自定义心情（心情管理新增）。
-  static List<MoodCfg> customMoods = const [];
+  /// 心情选择器全集：服务端列表优先，未拉取（首启/demo/服务端空表）回落种子。
+  static List<MoodCfg> get allMoods =>
+      serverMoods.isNotEmpty ? serverMoods : moods;
 
-  /// 心情选择器全集：默认 6 + 自定义。
-  static List<MoodCfg> get allMoods => [...moods, ...customMoods];
+  /// 心情 key → 显示名：服务端 name（缺口 #9）→ 种子中文名 → key 本身。
+  static String moodNameOf(String key, {String? serverName}) {
+    if (serverName != null && serverName.isNotEmpty) return serverName;
+    for (final m in moods) {
+      if (m.key == key) return m.name;
+    }
+    return key;
+  }
 
   static MoodCfg moodOf(String key) {
-    for (final m in customMoods) {
+    for (final m in allMoods) {
       if (m.key == key) return m;
     }
-    MoodCfg? base;
-    for (final m in moods) {
-      if (m.key == key) base = m;
-    }
-    if (base == null) return moods.last; // 未知 key 兜底（与原实现一致）
-    final o = moodOverrides[key];
-    return o ?? base;
+    return moods.last; // 未知 key 兜底（与原实现一致）
   }
 
   /// 标签默认模板（02 §4.2 tag_config 种子，device 0）。

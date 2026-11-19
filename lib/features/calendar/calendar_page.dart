@@ -58,6 +58,11 @@ class _CalendarPageState extends ConsumerState<CalendarPage> {
           ..sort((a, c) => dist[c]!.compareTo(dist[a]!)))
         .take(4);
 
+    // 全局连续天数（服务端 stats 优先，失败回落本地计算——与 me 页同口径）
+    final streak = state.demo
+        ? 23
+        : (state.stats?.streak ?? computeStreak(state.entries, DateTime.now()));
+
     final note = state.holidays?.noteFor(_focused.year, _focused.month);
 
     return SingleChildScrollView(
@@ -109,22 +114,31 @@ class _CalendarPageState extends ConsumerState<CalendarPage> {
               ],
             ),
           ),
-          // 节假日说明行
+          // 节假日说明行（§5.14：图例并入本行——提示语一律在顶部，不放底部）
           Padding(
             padding: const EdgeInsets.fromLTRB(18, 6, 18, 10),
             child: SizedBox(
               height: 16,
-              child: note == null
-                  ? const SizedBox.shrink()
-                  : Text.rich(
-                      TextSpan(children: [
-                        TextSpan(
-                          text: note,
-                          style: TextStyle(
-                              fontSize: 12, color: Tokens.label2(b)),
-                        ),
-                      ]),
+              child: Text.rich(
+                TextSpan(children: [
+                  if (note != null) ...[
+                    TextSpan(
+                      text: note,
+                      style: TextStyle(
+                          fontSize: 12, color: Tokens.label2(b)),
                     ),
+                    const TextSpan(
+                        text: ' · ',
+                        style: TextStyle(
+                            fontSize: 12, color: Color(0x668E8E93))),
+                  ],
+                  TextSpan(
+                    text: '周末与法定节假日红色 · 班 = 调休上班 · 圆点为心情',
+                    style: TextStyle(
+                        fontSize: 12, color: Tokens.label3(b)),
+                  ),
+                ]),
+              ),
             ),
           ),
           // 月历
@@ -179,37 +193,58 @@ class _CalendarPageState extends ConsumerState<CalendarPage> {
               ),
             ),
           ),
-          // 底部统计
+          // 底部统计卡（§5.14：图例移顶部后下方偏空 → 统计升级为卡片填充）
           Padding(
-            padding: const EdgeInsets.fromLTRB(18, 14, 18, 0),
-            child: Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-              children: [
-                Text('本月 $monthCount 条',
-                    style:
-                        TextStyle(fontSize: 13, color: Tokens.label2(b))),
-                Row(
-                  children: [
-                    for (final mood in distTop)
-                      Padding(
-                        padding: const EdgeInsets.only(left: 8),
-                        child: Text(
-                          '${AppDefaults.moodOf(mood).emoji}×${dist[mood]}',
-                          style: TextStyle(
-                              fontSize: 13, color: Tokens.label2(b)),
-                        ),
-                      ),
+            padding: const EdgeInsets.fromLTRB(14, 14, 14, 0),
+            child: Container(
+              padding:
+                  const EdgeInsets.symmetric(horizontal: 16, vertical: 13),
+              decoration: BoxDecoration(
+                color: Tokens.card(b),
+                borderRadius: BorderRadius.circular(14),
+                boxShadow: [
+                  BoxShadow(
+                    color: Colors.black.withValues(alpha: .04),
+                    blurRadius: 2,
+                    offset: const Offset(0, 1),
+                  ),
+                ],
+              ),
+              child: Row(
+                children: [
+                  Text('本月 $monthCount 条',
+                      style: TextStyle(
+                          fontSize: 15,
+                          fontWeight: FontWeight.w700,
+                          color: Tokens.label(b))),
+                  const Spacer(),
+                  if (streak > 0) ...[
+                    Text('连续 $streak 天',
+                        style: TextStyle(
+                            fontSize: 13, color: Tokens.label2(b))),
+                    const SizedBox(width: 12),
                   ],
-                ),
-              ],
-            ),
-          ),
-          Padding(
-            padding: const EdgeInsets.only(top: 16),
-            child: Center(
-              child: Text(
-                '周末与法定节假日红色 · 班 = 调休上班 · 圆点为心情',
-                style: TextStyle(fontSize: 11, color: Tokens.label3(b)),
+                  // 心情分布自适应收缩（窄屏 390px 下与条数/连续同行不溢出）
+                  Flexible(
+                    child: FittedBox(
+                      fit: BoxFit.scaleDown,
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          for (final mood in distTop.take(3))
+                            Padding(
+                              padding: const EdgeInsets.only(left: 8),
+                              child: Text(
+                                '${AppDefaults.moodOf(mood).emoji}×${dist[mood]}',
+                                style: TextStyle(
+                                    fontSize: 13, color: Tokens.label2(b)),
+                              ),
+                            ),
+                        ],
+                      ),
+                    ),
+                  ),
+                ],
               ),
             ),
           ),

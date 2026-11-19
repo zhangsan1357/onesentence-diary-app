@@ -529,12 +529,16 @@ class DayCardBody extends ConsumerWidget {
           child: Row(
             children: [
               // 天卡头像 56（晨 17「再大点」）；晨 18 §2.7 v4 池命中本地直读；
-              // 晨 19 §5.12 本地化 v5：缺失走默认人像（渲染零网络）。
+              // §5.14：池未命中的格子即时网络回落显示 + 挂载时补写池（下次
+              // 本地直读）——池没下满 1w 也都有头像（用户拍板）。
               Builder(builder: (context) {
                 final pool = ref.watch(avatarPoolProvider);
                 final salt = ref.watch(avatarSaltProvider);
+                final idx = avatarPoolIndex('$salt|$dateKey');
                 return DayCardAvatar(
-                  poolPath: pool.pathFor(avatarPoolIndex('$salt|$dateKey')),
+                  poolPath: pool.pathFor(idx),
+                  url: pool.urlForIndex(idx),
+                  ensure: () => unawaited(pool.ensureIndex(idx)),
                   size: 56,
                 );
               }),

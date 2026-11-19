@@ -26,7 +26,9 @@ String friendlyError(Object e) {
   if (e is StateError) {
     final m = e.message;
     if (m == 'locked') return '会话已锁定，请解锁后再试';
-    if (m == 'bio-missing') return '本机未设置面容/生物识别';
+    // §5.14：bio-missing 实际触发点=钥匙串存档失效（biometryCurrentSet 平台
+    // 语义），unlock 成功后会自动重存——文案指引口令解锁一次即可自愈
+    if (m == 'bio-missing') return '面容存档已失效 · 请先用口令解锁，之后面容将自动恢复';
     if (m == 'bad-passcode') return '口令不正确';
     return m;
   }

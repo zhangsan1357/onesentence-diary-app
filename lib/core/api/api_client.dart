@@ -109,13 +109,22 @@ class MoodCfgServer {
   final String emoji;
   final String color;
   final int sort;
-  MoodCfgServer({required this.moodKey, required this.emoji, required this.color, required this.sort});
+  // 契约缺口 #9（§5.14 派活中）：服务端 name 列落地前为 null → 客户端回落
+  // 种子中文名（AppDefaults.moodNameOf）。
+  final String? name;
+  const MoodCfgServer(
+      {required this.moodKey,
+      required this.emoji,
+      required this.color,
+      required this.sort,
+      this.name});
 
   factory MoodCfgServer.fromJson(Map<String, dynamic> j) => MoodCfgServer(
         moodKey: j['moodKey'] as String,
         emoji: j['emoji'] as String,
         color: j['color'] as String,
         sort: (j['sort'] as num?)?.toInt() ?? 0,
+        name: j['name'] as String?,
       );
 }
 
@@ -254,12 +263,14 @@ class ApiClient {
     required String deviceNo,
     required String name,
     required String userKeyHex,
+    String? passKey, // §5.14 契约缺口 #10：口令终身种子（64hex；旧服务端忽略）
   }) async {
     final data = await _post('/api/v1/diary/device/register', {
       'userId': userId,
       'deviceNo': deviceNo,
       'name': name,
       'userKey': userKeyHex,
+      if (passKey != null && passKey.isNotEmpty) 'passKey': passKey,
     });
     return DeviceRegResult(
       token: data['token'] as String,
@@ -378,17 +389,19 @@ class ApiClient {
     return StatsResult.fromJson(data);
   }
 
-  /// 心情写入（晨 19 §5.9，缺口 #8 提案）：镜像 saveTag——同 moodKey=更新幂等。
-  /// 端点未上线前调用失败由调用方静默吞掉（推送先行模式，端点上线即生效）。
+  /// 心情写入（晨 19 §5.9，缺口 #8 提案；§5.14 升级为唯一写路径）：同 moodKey=
+  /// 更新幂等。name 可选（缺口 #9 落地前服务端忽略——Spring 默认忽略未知字段）。
   Future<int> saveMood({
     required String moodKey,
     required String emoji,
     required String color,
+    String? name,
   }) async {
     final data = await _post('/api/v1/diary/config/moods', {
       'moodKey': moodKey,
       'emoji': emoji,
       'color': color,
+      if (name != null && name.isNotEmpty) 'name': name,
     });
     return (data['id'] as num).toInt();
   }

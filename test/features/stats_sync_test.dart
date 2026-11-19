@@ -21,6 +21,7 @@ class FakeApi extends ApiClient {
     required String deviceNo,
     required String name,
     required String userKeyHex,
+    String? passKey,
   }) async =>
       DeviceRegResult(token: 't-fake', deviceId: 1);
 

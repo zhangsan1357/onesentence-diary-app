@@ -67,11 +67,11 @@ class _HomeShellState extends ConsumerState<HomeShell> {
             bottom: 0,
             child: _TabBar(current: _tab, onTap: _switchTab, onFab: _openCompose),
           ),
-          // toast
+          // toast（§5.14：提示语上浮——顶部浮窗，不再压在底部 tab 栏上方）
           Positioned(
             left: 0,
             right: 0,
-            bottom: 0,
+            top: 0,
             child: Center(
               child: ToastHost(
                 message: state.toast,

@@ -44,14 +44,16 @@ class MediaInput {
 }
 
 /// 标签/心情显示配置（设备本地 KV，注销账号一并清除）。
-/// cfg.tagDeleted / cfg.moodDeleted = 本地删除名单（契约无删除端点，防拉取
-/// 复活，§4.1/§5.9）。
+/// §5.14：心情全面服务端化后只剩标签本地项 + cfg.moodServer 快照（离线显示
+/// 上次拉取的服务端数据）；cfg.moodOver/moodCustom/moodDeleted 为旧模型遗留键，
+/// 注销时一并清掉。
 const cfgKvKeys = [
   'cfg.tagColor',
   'cfg.tagPreset',
+  'cfg.tagDeleted',
+  'cfg.moodServer',
   'cfg.moodOver',
   'cfg.moodCustom',
-  'cfg.tagDeleted',
   'cfg.moodDeleted',
   'cfg.rotateOld',
   'cfg.rotateOldPub',
@@ -206,7 +208,7 @@ class AppSession extends Notifier<AppState> {
     if (ks == null || ks.wrapNonceB64.isNotEmpty) return;
     final session = sessionFromPlain(ks);
     _session = session;
-    _api.otpKey = ks.publicKeyHex;
+    _api.otpKey = _passKeyOf(ks);
     state = state.copyWith(
       ready: true,
       hasKeystore: true,
@@ -334,7 +336,7 @@ class AppSession extends Notifier<AppState> {
       // 明文 keystore：免口令直进（无 Argon2id，启动瞬时）
       final session = sessionFromPlain(ks);
       _session = session;
-      _api.otpKey = ks.publicKeyHex;
+      _api.otpKey = _passKeyOf(ks);
       unawaited(_resumeRotateIfAny()); // 换钥中断续跑（§5.4）
       state = state.copyWith(
         ready: true,
@@ -403,12 +405,22 @@ class AppSession extends Notifier<AppState> {
     }
     final session = await unlockKeystore(ks, passcode);
     _session = session;
-    _api.otpKey = ks.publicKeyHex;
+    _api.otpKey = _passKeyOf(ks);
     state = state.copyWith(locked: false);
     unawaited(_resumeRotateIfAny()); // 换钥中断续跑（§5.4）
     if (!state.lockEnabled && ks.wrapNonceB64.isNotEmpty) {
       // 一次性迁移：口令 keystore → 明文（此后免口令直进）
       await _persistKeystore(plainFromSession(session));
+    }
+    // §5.14 面容存档自愈：ui.bio=1 但钥匙串存档缺失（biometryCurrentSet 平台
+    // 语义：生物特征集变更/系统重置后自动作废）→ 口令解锁本次成功即静默重存，
+    // 面容下次恢复可用——「口令与面容二选一」常态不被平台失效打断。
+    if (state.bioUnlock) {
+      try {
+        if (await bio.readPriv() == null) {
+          await bio.savePriv(b64Encode(session.privateKey));
+        }
+      } catch (_) {} // 自愈失败静默（下次口令解锁再试）
     }
     await _loadLocalEntries();
     // 服务端不可达不阻断解锁（晨 19 §5.11）：口令已验证、本地内容已解密展示，
@@ -456,7 +468,7 @@ class AppSession extends Notifier<AppState> {
     RecoveryWords.validate(wordsPhrase); // 抛 FormatException → UI 内联展示
     final session = await sessionFromIdentity(wordsPhrase, userId: name);
     _session = session;
-    _api.otpKey = session.keystore.publicKeyHex;
+    _api.otpKey = _passKeyOf(session.keystore);
     await _persistKeystore(session.keystore);
     state = state.copyWith(
       ready: true,
@@ -501,6 +513,7 @@ class AppSession extends Notifier<AppState> {
         deviceNo: session.keystore.deviceNo,
         userId: name,
         recoveryCode: session.keystore.recoveryCode,
+        passKey: session.keystore.passKey,
       );
     }
     _session = UnlockedSession(
@@ -508,7 +521,7 @@ class AppSession extends Notifier<AppState> {
       privateKey: session.privateKey,
       publicKey: session.publicKey,
     );
-    _api.otpKey = ks.publicKeyHex;
+    _api.otpKey = _passKeyOf(ks);
     await _persistKeystore(ks);
     await _db!.clearEntries(); // 旧身份的本地索引作废
     await _db!.clearPendingMedia(); // 旧身份的离线队列一并作废
@@ -546,6 +559,7 @@ class AppSession extends Notifier<AppState> {
       deviceNo: s.keystore.deviceNo,
       userId: name,
       recoveryCode: s.keystore.recoveryCode,
+      passKey: s.keystore.passKey,
     );
     _session = UnlockedSession(
       keystore: newKs,
@@ -578,8 +592,7 @@ class AppSession extends Notifier<AppState> {
     _api.otpKey = null;
     AppDefaults.tagColorOverrides = {};
     AppDefaults.tagPresets = List.of(AppDefaults.defaultTags);
-    AppDefaults.moodOverrides = {};
-    AppDefaults.customMoods = const [];
+    AppDefaults.serverMoods = const [];
     try {
       await bio.deletePriv(); // 面容解锁的钥匙串私钥存档一并清除（平台异常不阻塞注销）
     } catch (_) {}
@@ -592,7 +605,6 @@ class AppSession extends Notifier<AppState> {
         await db.kvRemove(k);
       }
       _deletedTags.clear();
-      _deletedMoods.clear();
       await db.clearDrafts(); // 输入草稿随注销一并清除（§4.12）
       await db.kvRemove('ui.bio');
       await db.kvRemove('api.token');
@@ -659,6 +671,9 @@ class AppSession extends Notifier<AppState> {
     state = state.copyWith(bioUnlock: false, toast: '面容 ID 解锁已关闭');
   }
 
+  /// 本设备面容/生物识别是否可用（§5.14：设置页 face 验证入口的显隐判据）。
+  Future<bool> bioAvailable() => bio.available();
+
   /// 面容解锁（LockOverlay 在生物识别通过后调用）：私钥自钥匙串直取。
   /// 无存档（未启用/生物特征集变更失效）抛 StateError('bio-missing') → UI 回退口令。
   Future<void> unlockBiometric() async {
@@ -677,7 +692,7 @@ class AppSession extends Notifier<AppState> {
       privateKey: priv,
       publicKey: hexDecode(ks.publicKeyHex),
     );
-    _api.otpKey = ks.publicKeyHex;
+    _api.otpKey = _passKeyOf(ks);
     if (!ref.mounted) return;
     state = state.copyWith(locked: false);
     await _loadLocalEntries();
@@ -744,6 +759,25 @@ class AppSession extends Notifier<AppState> {
     state = state.copyWith(toast: '主密钥已更换 · 数据无需重加密');
   }
 
+  /// 面容 ID 验证后换口令（§5.14「face 改秘钥」）：会话已解锁（私钥在内存），
+  /// 生物识别通过即免旧口令直接重包裹。验证未通过抛 FormatException。
+  Future<void> rekeyWithBio(String newPasscode) async {
+    final s = _session;
+    if (s == null) return;
+    if (newPasscode.length < 6) {
+      throw const FormatException('口令需要 ≥6 位');
+    }
+    if (!await bio.available()) {
+      throw const FormatException('本设备无可用面容/生物识别');
+    }
+    if (!await bio.authenticate('验证身份以更换锁定口令')) {
+      throw const FormatException('生物识别未通过');
+    }
+    final newKs = await rekeyKeystore(s, newPasscode);
+    await _persistKeystore(newKs);
+    state = state.copyWith(toast: '主密钥已更换 · 数据无需重加密');
+  }
+
   Future<void> _persistKeystore(KeystoreData ks) async {
     for (final e in keystoreToKv(ks).entries) {
       await _db!.kvSet(e.key, e.value);
@@ -764,18 +798,37 @@ class AppSession extends Notifier<AppState> {
   }
 
   Future<void> _register() async {
-    final s = _session!;
+    var s = _session!;
     if (s.keystore.userId.isEmpty) {
       throw StateError('未设置注册名');
+    }
+    // §5.14 契约缺口 #10：口令种子首次注册时生成（每设备随机 64hex）并随
+    // keystore 落盘——此后 rotate/rename 均不改，动态口令输入终身不变。
+    if (s.keystore.passKey.isEmpty) {
+      final ks = KeystoreData(
+        saltB64: s.keystore.saltB64,
+        wrappedPrivB64: s.keystore.wrappedPrivB64,
+        wrapNonceB64: s.keystore.wrapNonceB64,
+        publicKeyHex: s.keystore.publicKeyHex,
+        deviceNo: s.keystore.deviceNo,
+        userId: s.keystore.userId,
+        recoveryCode: s.keystore.recoveryCode,
+        passKey: hexEncode(randomBytes(32)),
+      );
+      _session = UnlockedSession(
+          keystore: ks, privateKey: s.privateKey, publicKey: s.publicKey);
+      await _persistKeystore(ks);
+      s = _session!;
     }
     final result = await _api.registerDevice(
       userId: s.keystore.userId,
       deviceNo: s.keystore.deviceNo,
       name: 'iPhone',
       userKeyHex: s.keystore.publicKeyHex,
+      passKey: s.keystore.passKey,
     );
     _api.token = result.token;
-    _api.otpKey = s.keystore.publicKeyHex;
+    _api.otpKey = _passKeyOf(s.keystore);
     await _db!.kvSet('api.token', result.token);
     await _db!.kvSet('api.deviceId', '${result.deviceId}');
     _set((s) => s.copyWith(serverStatus: '已注册 · 设备#${result.deviceId}'));
@@ -818,6 +871,11 @@ class AppSession extends Notifier<AppState> {
       }
     }
   }
+
+  /// 动态口令输入源（§5.14 契约缺口 #10）：passKey 已登记 → passKey（终身
+  /// 不变量，rotate/rename 不动）；存量空 → 回退 userKey（旧种子语义）。
+  String _passKeyOf(KeystoreData ks) =>
+      ks.passKey.isNotEmpty ? ks.passKey : ks.publicKeyHex;
 
   /// mood color 解析（§5.10 契约修正）：#RRGGBB hex 优先（服务端校验/种子格式），
   /// 兼容色名（tagColorHex 反查），兜底灰。
@@ -1559,10 +1617,11 @@ class AppSession extends Notifier<AppState> {
       deviceNo: s.keystore.deviceNo,
       userId: name,
       recoveryCode: s.keystore.recoveryCode,
+      passKey: s.keystore.passKey,
     );
     _session = UnlockedSession(
         keystore: ks, privateKey: s.privateKey, publicKey: s.publicKey);
-    _api.otpKey = ks.publicKeyHex;
+    _api.otpKey = _passKeyOf(ks);
     await _db!.kvRemove('api.token'); // 强制重新注册（同 userKey 新 userId）
     await _persistKeystore(ks);
     await _register();
@@ -1594,12 +1653,17 @@ class AppSession extends Notifier<AppState> {
         b64Encode(
             await wrapCek(s.privateKey, newSess.publicKey))); // 旧私钥可解包
     await _db!.kvSet(
-        'cfg.rotateOldPub', s.keystore.publicKeyHex); // 旧公钥：rotate 口令用
+        'cfg.rotateOldPub', s.keystore.publicKeyHex); // 旧公钥（存量无 passKey 时的 rotate 口令回退源）
     await _db!.kvSet('cfg.rotateDone', '0');
     _session = newSess;
-    _api.otpKey = ks.publicKeyHex;
+    // §5.14：③ 期间 otpKey 必须保持旧钥——服务端此刻仍持旧 user_key（rotate
+    // 端点是④），提前切新钥会让每个 replaceEntry 401「动态口令无效」→ 轮换
+    // 中断 → 续跑同样 401 死循环 → 横幅「同步失败，口令过期」（真机实测）。
+    // 新钥在 _rotateRegister（④）成功后才切。
     await _rotateEntries(s.privateKey); // ③ 全量重加密
-    await _rotateRegister(ks, s.keystore.publicKeyHex); // ④ rotate 端点：旧钥口令 + 新 token
+    await _rotateRegister(
+        ks,
+        _passKeyOf(s.keystore)); // ④ passKey（存量=旧 userKey）口令 + 新 token
     await _clearRotateTemp(); // ⑤
     await _loadLocalEntries();
     _set((st) => st.copyWith(toast: '主密钥已更换 · 请立即抄写新恢复词'));
@@ -1669,15 +1733,17 @@ class AppSession extends Notifier<AppState> {
   }
 
   /// ④ rotate 端点：同 userId 换 userKey（服务端原子更新）+ 新 token 落盘。
-  /// 协议注意 1（§5.4）：鉴权门先于控制器——rotate 请求必须用**旧钥**算
-  /// X-Diary-Pass（服务端此刻还持旧钥），成功后切新钥；失败恢复调用前值。
-  Future<void> _rotateRegister(KeystoreData ks, String oldKeyHex) async {
+  /// 协议注意 1（§5.4）/§5.14：rotate 请求口令用 [preOtp]——passKey 已登记时
+  /// 门种子=pass_key 恒定（passKey 即正确输入）；存量未登记时门种子=旧
+  /// user_key（preOtp=旧钥）。成功后 otpKey 切新身份的 passKey 感知值；
+  /// 失败恢复调用前值。
+  Future<void> _rotateRegister(KeystoreData ks, String preOtp) async {
     final saved = _api.otpKey;
-    _api.otpKey = oldKeyHex;
+    _api.otpKey = preOtp;
     try {
       final reg = await _api.rotate(userKeyHex: ks.publicKeyHex);
       _api.token = reg.token;
-      _api.otpKey = ks.publicKeyHex;
+      _api.otpKey = _passKeyOf(ks);
       await _db!.kvSet('api.token', reg.token);
       await _db!.kvSet('api.deviceId', '${reg.deviceId}');
       _set((st) =>
@@ -1697,6 +1763,8 @@ class AppSession extends Notifier<AppState> {
   /// 轮换续跑（中断安全，§5.4）：cfg.rotateOld 存在 = 上次轮换未完 → 用当前
   /// 会话私钥（= 新身份，keystore 已先重写）解包旧私钥，从进度继续 ③④⑤。
   /// unlock 与 init 明文恢复后调用；无暂存即静默跳过。
+  /// §5.14：③ 的口令输入与服务端状态有关——rotate 已落服务端（服务端=新钥）用
+  /// 当前钥即通；从未落（服务端=旧钥）则 401 → 回退旧钥重试一轮（两态都覆盖）。
   Future<void> _resumeRotateIfAny() async {
     if (_demo || _session == null || _db == null) return;
     try {
@@ -1705,14 +1773,27 @@ class AppSession extends Notifier<AppState> {
       final s = _session!;
       final oldPriv = await unwrapCek(b64Decode(old), s.privateKey);
       final oldPubHex = await _db!.kvGet('cfg.rotateOldPub') ?? '';
-      await _rotateEntries(oldPriv);
+      try {
+        await _rotateEntries(oldPriv);
+      } on ApiException catch (e) {
+        // §5.14：passKey 已登记时门种子恒定，401 不是种子错位 → 直接上抛；
+        // 存量（无 passKey）且 rotate 未落服务端（门种子=旧 user_key）→ 旧钥重试
+        if (!(e.code == 401 && e.message.contains('动态口令')) ||
+            oldPubHex.isEmpty ||
+            s.keystore.passKey.isNotEmpty) {
+          rethrow;
+        }
+        _api.otpKey = oldPubHex;
+        await _rotateEntries(oldPriv);
+      }
       // 协议注意 2（§5.4）：续跑用新钥直接 register 续接（服务端已在 rotate 时
       // 换钥）；register 被拒 = rotate 从未落服务端的窗口 → 兜底 rotate 一次
       //（此时服务端仍持旧钥，旧钥口令才可能通过）。
       try {
         await _register();
       } catch (_) {
-        await _rotateRegister(s.keystore, oldPubHex);
+        await _rotateRegister(s.keystore,
+            s.keystore.passKey.isNotEmpty ? s.keystore.passKey : oldPubHex);
       }
       await _clearRotateTemp();
       await _loadLocalEntries();
@@ -1841,34 +1922,22 @@ class AppSession extends Notifier<AppState> {
           name: (j['name'] as String?) ?? '心情',
           colorHex: (j['colorHex'] as int?) ?? 0xFF8E8E93,
         );
+    // §5.14 心情快照：服务端全量列表的离线缓存（唯一事实源在服务端，快照只
+    // 用于未联网时显示上次数据；坏数据按缺省处理 → 回落静态种子）。
     try {
-      AppDefaults.moodOverrides = {
-        for (final e in jMap(kv['cfg.moodOver']).entries)
-          if (AppDefaults.moods.any((m) => m.key == e.key))
-            e.key: moodFromJson(e.value as Map<String, dynamic>),
-      };
-    } catch (_) {
-      AppDefaults.moodOverrides = {};
-    }
-    try {
-      AppDefaults.customMoods = [
-        for (final v in jList(kv['cfg.moodCustom']))
-          if (v is Map<String, dynamic> && (v['key'] as String?)?.isNotEmpty == true)
+      AppDefaults.serverMoods = [
+        for (final v in jList(kv['cfg.moodServer']))
+          if (v is Map<String, dynamic> &&
+              (v['key'] as String?)?.isNotEmpty == true)
             moodFromJson(v),
       ];
     } catch (_) {
-      AppDefaults.customMoods = const [];
+      AppDefaults.serverMoods = const [];
     }
     _deletedTags
       ..clear()
       ..addAll([
         for (final v in jList(kv['cfg.tagDeleted']))
-          if (v is String) v,
-      ]);
-    _deletedMoods
-      ..clear()
-      ..addAll([
-        for (final v in jList(kv['cfg.moodDeleted']))
           if (v is String) v,
       ]);
   }
@@ -1886,29 +1955,24 @@ class AppSession extends Notifier<AppState> {
       await db.kvSet(
           'cfg.tagColor', jsonEncode(AppDefaults.tagColorOverrides));
       await db.kvSet('cfg.tagPreset', jsonEncode(AppDefaults.tagPresets));
-      await db.kvSet(
-          'cfg.moodOver',
-          jsonEncode({
-            for (final e in AppDefaults.moodOverrides.entries)
-              e.key: {
-                'key': e.value.key,
-                'emoji': e.value.emoji,
-                'name': e.value.name,
-                'colorHex': e.value.colorHex,
-              },
-          }));
-      await db.kvSet(
-          'cfg.moodCustom',
-          jsonEncode([
-            for (final m in AppDefaults.customMoods)
-              {
-                'key': m.key,
-                'emoji': m.emoji,
-                'name': m.name,
-                'colorHex': m.colorHex,
-              },
-          ]));
     }
+    if (!ref.mounted) return;
+    state = state.copyWith(cfgVersion: state.cfgVersion + 1);
+  }
+
+  /// 心情快照 → KV + cfgVersion 自增（§5.14：服务端列表拉取/写后刷新的唯一出口）。
+  Future<void> _persistMoodSnapshot() async {
+    await _db?.kvSet(
+        'cfg.moodServer',
+        jsonEncode([
+          for (final m in AppDefaults.serverMoods)
+            {
+              'key': m.key,
+              'emoji': m.emoji,
+              'name': m.name,
+              'colorHex': m.colorHex,
+            },
+        ]));
     if (!ref.mounted) return;
     state = state.copyWith(cfgVersion: state.cfgVersion + 1);
   }
@@ -1949,7 +2013,8 @@ class AppSession extends Notifier<AppState> {
     await _persistCfg();
   }
 
-  /// 心情管理：新增自定义心情（key 设备内唯一即可，展示层直接按 key 渲染）。
+  /// 心情管理（§5.14 全面服务端化）：新增——推送成功后重拉服务端覆盖本地。
+  /// 严格云一致：推送失败不落本地（异常上抛，UI 给友好提示）。
   Future<MoodCfg> addMood(String name, String emoji, int colorHex) async {
     final n = name.trim();
     if (n.isEmpty || n.length > 8) {
@@ -1961,57 +2026,45 @@ class AppSession extends Notifier<AppState> {
       name: n,
       colorHex: colorHex,
     );
-    AppDefaults.customMoods = [...AppDefaults.customMoods, m];
-    await _persistCfg();
-    _pushMood(m); // 双写·推（§5.9）：失败静默，端点上线即生效
+    await _pushMood(m);
+    await _pullMoods();
     return m;
   }
 
-  /// 心情管理：编辑默认/自定义心情的显示（key 不变，历史条目照常渲染）。
+  /// 心情管理：编辑（默认/自定义同路径——服务端 upsertMood 同 key 幂等更新）。
   Future<void> updateMood(
       String key, String emoji, String name, int colorHex) async {
     final n = name.trim();
     if (n.isEmpty || n.length > 8) {
       throw const FormatException('心情名需要 1~8 个字');
     }
-    if (AppDefaults.customMoods.any((m) => m.key == key)) {
-      AppDefaults.customMoods = [
-        for (final m in AppDefaults.customMoods)
-          if (m.key == key)
-            MoodCfg(key: key, emoji: emoji, name: n, colorHex: colorHex)
-          else
-            m,
-      ];
-      _pushMood(
-          MoodCfg(key: key, emoji: emoji, name: n, colorHex: colorHex));
-    } else {
-      AppDefaults.moodOverrides = {
-        ...AppDefaults.moodOverrides,
-        key: MoodCfg(key: key, emoji: emoji, name: n, colorHex: colorHex),
-      };
-      // 默认心情显示覆盖不推送（设备本地偏好，§5.9）
-    }
-    await _persistCfg();
+    await _pushMood(MoodCfg(
+        key: key, emoji: emoji, name: n, colorHex: colorHex));
+    await _pullMoods();
   }
 
-  /// 心情管理：删除自定义心情（默认 6 心情不可删，仅可改显示）。
+  /// 心情管理：删除（按 moodKey 服务端物理删；不存在=幂等成功）。
+  /// 默认种子心情不可删（服务端是全局表，删种子影响所有设备）。
+  /// 先本地移除再重拉——服务端清空时 _pullMoods 的空表守卫会跳过覆盖，
+  /// 删除语义必须立即生效；重拉失败以本地移除为准（下次 sync 对齐）。
   Future<void> removeMood(String key) async {
-    AppDefaults.customMoods = AppDefaults.customMoods
+    if (AppDefaults.moods.any((m) => m.key == key)) {
+      throw const FormatException('默认心情不可删除');
+    }
+    await _api.deleteMood(key);
+    AppDefaults.serverMoods = AppDefaults.serverMoods
         .where((m) => m.key != key)
         .toList(growable: false);
-    _deletedMoods.add(key); // 删除名单：拉取补缺过滤防复活（§5.9）
-    await _db?.kvSet('cfg.moodDeleted', jsonEncode(_deletedMoods.toList()));
-    await _persistCfg();
-    unawaited(_api.deleteMood(key).catchError((_) {})); // 推失败静默（§5.9）
+    try {
+      await _pullMoods();
+    } catch (_) {}
+    await _persistMoodSnapshot();
   }
 
   // ---------- 标签/心情双写与输入草稿（晨 17 §4.1/§4.12） ----------
 
   /// 本地删除名单（契约无标签删除端点，防拉取复活；KV cfg.tagDeleted）。
   final _deletedTags = <String>{};
-
-  /// 心情删除名单（晨 19 §5.9：服务端来源心情删除后防拉取复活；KV cfg.moodDeleted）。
-  final _deletedMoods = <String>{};
 
   /// 双写·推（§4.1）：标签增/改色后 saveTag（同 device 同名=更新，幂等）。
   /// 色推「当前生效色」= 覆盖优先，无覆盖时哈希自动色物化为显式色。
@@ -2022,22 +2075,35 @@ class AppSession extends Notifier<AppState> {
     unawaited(_api.saveTag(name: tag, color: color).catchError((_) => 0));
   }
 
-  /// 双写·推·心情（§5.9，§5.10 契约修正）：自定义心情增/改后 saveMood（同
-  /// moodKey=更新幂等）。**服务端 color 契约 = #RRGGBB 六位 hex**（校验+种子同
-  /// 格式，与 saveTag 色名语义不同）→ colorHex 取低 24 位格式化。失败静默。
-  void _pushMood(MoodCfg m) {
+  /// 心情推（§5.14 唯一写路径）：await 推送——**服务端 color 契约 = #RRGGBB
+  /// 六位 hex**（校验+种子同格式）→ colorHex 取低 24 位格式化；emoji @NotBlank
+  /// 空值兜底。失败上抛给调用方（严格云一致：不落本地）。
+  Future<void> _pushMood(MoodCfg m) async {
     final hex =
         '#${(m.colorHex & 0xFFFFFF).toRadixString(16).toUpperCase().padLeft(6, '0')}';
-    // emoji @NotBlank（服务端校验）：存量/异常空值兜底默认表情，避免推送恒 400
     final emoji = m.emoji.isEmpty ? '📝' : m.emoji;
-    unawaited(_api
-        .saveMood(moodKey: m.key, emoji: emoji, color: hex)
-        .catchError((_) => 0));
+    await _api.saveMood(moodKey: m.key, emoji: emoji, color: hex, name: m.name);
   }
 
-  /// 双写·拉（§4.1）：syncNow 挂载。补缺合并——服务器独有的预设/色并入本地
-  ///（同名本地优先：契约无时间戳，无法判新旧）；删除名单过滤防复活；
-  /// 心情种子仅填充本地没有的 key（并入自定义列表使其可用）。失败静默。
+  /// 心情全量拉取覆盖（§5.14）：服务端全局表 = 唯一事实源，列表 sort ASC。
+  /// 空表（异常/清库）不覆盖 → allMoods 回落静态种子；成功写 KV 快照供离线。
+  Future<void> _pullMoods() async {
+    final moods = await _api.configMoods();
+    if (moods.isEmpty) return;
+    AppDefaults.serverMoods = [
+      for (final m in moods)
+        MoodCfg(
+          key: m.moodKey,
+          emoji: m.emoji.isEmpty ? '📝' : m.emoji,
+          name: AppDefaults.moodNameOf(m.moodKey, serverName: m.name),
+          colorHex: _moodColorOf(m.color),
+        ),
+    ];
+    await _persistMoodSnapshot();
+  }
+
+  /// 双写·拉（§4.1）：syncNow 挂载。标签补缺合并（同名本地优先：契约无时间戳，
+  /// 无法判新旧）；删除名单过滤防复活；心情段全量覆盖（§5.14）。失败静默。
   Future<void> _syncCfg() async {
     try {
       final tags = await _api.configTags();
@@ -2055,26 +2121,7 @@ class AppSession extends Notifier<AppState> {
         AppDefaults.tagColorOverrides = colors;
         await _persistCfg();
       }
-      final moods = await _api.configMoods();
-      final known = {
-        for (final m in AppDefaults.moods) m.key,
-        for (final m in AppDefaults.customMoods) m.key,
-      };
-      final add = <MoodCfg>[];
-      for (final m in moods) {
-        if (known.contains(m.moodKey)) continue;
-        if (_deletedMoods.contains(m.moodKey)) continue; // 删除名单防复活（§5.9）
-        add.add(MoodCfg(
-          key: m.moodKey,
-          emoji: m.emoji,
-          name: m.emoji.isEmpty ? '心情' : m.moodKey,
-          colorHex: _moodColorOf(m.color),
-        ));
-      }
-      if (add.isNotEmpty) {
-        AppDefaults.customMoods = [...AppDefaults.customMoods, ...add];
-        await _persistCfg();
-      }
+      await _pullMoods();
     } catch (_) {
       // 网络不可达/业务错误：配置留在本地，下次手动刷新再拉（§4.1）
     }

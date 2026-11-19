@@ -35,7 +35,7 @@ void main() {
   test('StateError 哨兵转文案；中文业务消息原样', () {
     expect(friendlyError(StateError('locked')), '会话已锁定，请解锁后再试');
     expect(friendlyError(StateError('bad-passcode')), '口令不正确');
-    expect(friendlyError(StateError('bio-missing')), '本机未设置面容/生物识别');
+    expect(friendlyError(StateError('bio-missing')), '面容存档已失效 · 请先用口令解锁，之后面容将自动恢复');
     expect(friendlyError(StateError('本机无身份')), '本机无身份');
   });
 

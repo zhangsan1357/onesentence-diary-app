@@ -26,14 +26,12 @@ void main() {
   setUp(() {
     AppDefaults.tagColorOverrides = {};
     AppDefaults.tagPresets = List.of(AppDefaults.defaultTags);
-    AppDefaults.moodOverrides = {};
-    AppDefaults.customMoods = const [];
+    AppDefaults.serverMoods = const [];
   });
   tearDown(() {
     AppDefaults.tagColorOverrides = {};
     AppDefaults.tagPresets = List.of(AppDefaults.defaultTags);
-    AppDefaults.moodOverrides = {};
-    AppDefaults.customMoods = const [];
+    AppDefaults.serverMoods = const [];
   });
 
   testWidgets('feed：标题/空今日卡/长文折叠/评论徽标渲染', (tester) async {
@@ -188,12 +186,13 @@ void main() {
     await tester.tap(find.byIcon(Icons.account_circle_outlined),
         warnIfMissed: false);
     await tester.pumpAndSettle();
-    expect(find.text('端到端加密'), findsOneWidget);
+    // §5.14 非功能解释行删除（端到端加密/多设备共享信息弹窗行）
+    expect(find.text('端到端加密'), findsNothing);
+    expect(find.text('多设备共享'), findsNothing);
     expect(find.text('锁定保护'), findsOneWidget);
     // 身份凭证保存后不再展示（2026-11-14 调整）：恢复词行已移除
     expect(find.text('恢复词'), findsNothing);
     expect(find.text('新设备登录'), findsOneWidget);
-    expect(find.text('多设备共享'), findsOneWidget);
     expect(find.text('注销账号'), findsOneWidget);
     expect(find.text('更改注册名'), findsOneWidget); // 晨 19 §5.10 入口打开
     expect(find.text('更换 12 词主密钥'), findsOneWidget);
@@ -211,6 +210,8 @@ void main() {
     expect(find.text('立即锁定'), findsOneWidget);
     expect(find.text('外观'), findsOneWidget);
     expect(find.text('跟随系统'), findsOneWidget);
+    // §5.14：底部脚注删除
+    expect(find.textContaining('一句话日记 v2'), findsNothing);
   });
 
   testWidgets('发布流：FAB 打开 → 心情反选 → 标签回车 → 发布态', (tester) async {

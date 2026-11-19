@@ -14,6 +14,12 @@ class AvatarPool {
           filled: 0, total: kAvatarPoolSize, enabled: false));
 
   String? pathFor(int index) => null;
+
+  // §5.14：web 无种子清单（cravatar 也无 CORS 头，CanvasKit 加载必失败）→
+  // URL 恒 null、ensureIndex no-op——渲染恒默认人像占位。
+  String? urlForIndex(int index) => null;
+
+  Future<void> ensureIndex(int index) async {}
 }
 
 AvatarPool createAvatarPool() => AvatarPool();

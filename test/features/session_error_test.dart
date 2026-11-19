@@ -20,6 +20,7 @@ class ControllableApi extends ApiClient {
     required String deviceNo,
     required String name,
     required String userKeyHex,
+    String? passKey,
   }) async {
     if (failRegister) throw Exception('boom-raw-english');
     return DeviceRegResult(token: 't-fake', deviceId: 1);
