@@ -10,7 +10,7 @@
 | M2-a 工程 + golden 常绿 | ✅ 完成 | `flutter test` 81 项全绿（含 golden 向量；live 14 项后端在跑时执行）；`flutter analyze` 零问题 |
 | M2-b UI 全页面对照 mockup v2 | ✅ 完成 | Chrome 实测截图逐页对照（见下「视觉对照」）；像素采样自测通过 |
 | M3 客户端接后端 | ✅ 完成（2026-11-13；2026-11-14 随后端 v4 重验） | `flutter test test/live/` **14/14 全绿**：原 11 项回归 + 新增 M3-12 动态口令（错口令→401「动态口令」壳）、M3-13 多设备共享（同注册名+同密钥+新设备号→数据互通，②的服务端语义验收）、M3-14 冒名拒绝（同注册名异密钥→404）。M3-1~9 全程隐式回归 X-Diary-Pass 口令头（拦截器计算，公式对活后端 curl 实测） |
-| M4-a GitHub Actions 出 ipa | 🔧 本地就绪，待 push | git 仓库已初始化（main，5719d35）；`ios.yml` 合并旧工程 dvhdjdjdnddmaker/test 实证配置（macos-latest + Xcode 26.6.0 选择带回落）；补齐 `ios/Podfile`（原生插件 pod install 必需，旧工程缺失项）；待用户在 GitHub 建仓库并 push（需用户登录授权） |
+| M4-a GitHub Actions 出 ipa | ✅ 完成（2026-11-20 CI 实证） | f78b305 build-ios run 44570701686 **success**（另两个重复 run 已取消）：macos-latest 全链路绿（analyze/test 门禁 → build 未签名 ipa → artifact）。配置沿革：`ios.yml` 合并旧工程 dvhdjdjdnddmaker/test 实证配置（macos-latest + Xcode 26.6.0 选择带回落）+ 补齐 `ios/Podfile`（pod install 必需，b020a1f 修 `flutter_ios_podfile_setup`） |
 | M4-b Sideloadly 真机 | ⏳ 等待 M4-a | 依赖 ipa + 用户插线（USB 驱动缺失，04 §3.2） |
 | M5 真机回归 | ⏳ | 依赖 M4-b |
 
@@ -294,6 +294,8 @@
    - **⑦日历排版**：底部图例移顶部说明行（节假日说明合并）；底部统计升级卡片（本月条数+连续天数+心情 top3，FittedBox 防窄屏溢出）。
    - **⑧提示语上浮**：全局 ToastHost 底部黑胶囊 → 顶部浮窗（安全区下悬停，逻辑不变）。
    - **测试 190 项全绿**，analyze 零告警。E2E 诚实口径：§5.14 八项代码（passKey 接入前）真后端 GUI 实测 **T1~T4 全绿**（02:18/04:19/06:32/09:03——发布等待预算 240s 修复 DDC 编译抖动后）；passKey 接入后完整复跑受宿主浏览器反复崩溃未收束（用户拍板收尾）——passKey 为纯确定性输入源切换，语义由 identity_change 口令时序断言单测覆盖；E2E 设施预算修正随本轮落盘（发布等待 240s、看门狗 300s）。
+
+17. **M4-a CI 实证出 ipa（2026-11-20，用户 push f78b305 触发）**：GitHub Actions `ios.yml` build-ios run 44570701686（16:50Z）**success**——macos-latest 全链路（analyze/test 门禁 → `flutter build ipa` 未签名 → artifact `diary.ipa`），另两个同 commit 重复 run（16:46/16:47Z）已取消。里程碑表 M4-a 转 ✅；下一步 M4-b：用户在 Actions 页下载 artifact → Sideloadly 自签装真机。无需代码改动。
 
 ## 测试清单（`flutter test` 190 项全绿；后端未启动时 live 项自动 SKIP，就绪后 18 项全跑）
 
