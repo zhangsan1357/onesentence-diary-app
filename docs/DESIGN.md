@@ -948,3 +948,32 @@ ToastHost 从底部黑胶囊改为**顶部浮窗**（安全区下悬停，淡入
 | ①passKey 跨轮换 | identity_change_test：rotateIdentity 后会话 keystore.passKey == 旧值且拦截器输入源=passKey；轮换请求/重加密请求 otpKey 序列不出现新公钥 |
 | ②自定义轮换 | identity_change_test：rotateIdentity(customPhrase: 12 段任意) 成功且新公钥 = sessionFromIdentity(该短语) 公钥；无参调用仍随机（新公钥 ≠ 旧）；非法短语 FormatException |
 | ③跳转 | ui_smoke/demo：非时光 tab 打开发布 → 发布成功 → 时光 tab 可见；编辑模式保存不跳 |
+
+### 5.17 晨 22 追加：换钥输入与注册页一致化（12 宫格共用组件，用户拍板）
+
+**需求（用户）**：更换 12 词主密钥的输入页面与注册（首次创建）保持一致——§5.16②
+给换钥弹窗做了 textarea，用户要求统一为 onboarding 创建页的 **12 宫格形态**
+（逐格输入 + 随机生成 + 派生密钥同屏）。
+
+**改什么**：
+
+1. 抽公共组件 `lib/widgets/identity_words_grid.dart`（IdentityWordsGrid）：
+   onboarding 创建页的宫格块整体上收为唯一实现——3×4 序号格（顺序即位置；
+   整段短语粘贴到任意一格由 canonicalPhrase 空白归一兜住）、「随机生成 12 词 /
+   复制全部 12 词」（12 格非空才可复制）、派生密钥同屏（12 格非空即显 + 复制，
+   `ValueKey('derived-key')` 锚点保留）；**校验不在组件内**——拼接短语经
+   `onChanged` 交调用方，会话层 validateImport 三态兜底。
+2. onboarding 创建页改用组件（删私有重复实现约 200 行）；页内说明卡/警示行/
+   注册名/提交流程不动（`_effectivePhrase` 改由 onChanged 维护）。
+3. 换钥弹窗改用组件（textarea 退役）：AlertDialog `insetPadding` 收窄到 16 使
+   宫格宽度接近注册页；预填随机生成词、「开始更换」在 12 格非空才可点；成功后
+   维持既有强制抄写宫格展示。
+
+**边界**：组件纯输入收集不持业务状态；两处 UI 同源=永不漂移；既有测试锚点
+（13 个 TextField / derived-key key / 「随机生成 12 词」文案）全部保持。
+
+**测试映射**：
+| 设计点 | 测试 |
+|---|---|
+| 注册页等价回归 | 既有 ui_smoke 身份引导用例（13 输入框/黄金向量/随机生成）零改动通过 = 组件与原实现等价 |
+| 换钥宫格形态 | ui_smoke 新用例：换钥弹窗含 12 宫格 + 随机生成 + 派生密钥块；清空格后「开始更换」不可点；取消不执行轮换 |
