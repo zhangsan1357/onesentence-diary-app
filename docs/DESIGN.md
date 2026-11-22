@@ -899,3 +899,52 @@ ToastHost 从底部黑胶囊改为**顶部浮窗**（安全区下悬停，淡入
 | 三态判定 | recovery_words_test 新组 validateImport：任意 12 段通过 / 全词表校验和错仍抛 / 全词表校验和过通过 / 混合 11 词+1 非词表段通过 / 段数≠12 抛 |
 | 确定性 | identity_test 新组：同自定义短语同公钥、大小写不同异公钥、createIdentity 自定义短语建会话（keystore 公钥一致） |
 | 派生密钥展示 | onboarding 既有 widget 测试基建可挂则断言：12 段自定义输入后派生密钥块出现 |
+
+### 5.16 晨 22 批次：轮换后「口令过期」真 bug（passKey 断链）+ 轮换支持自定义输入 + 发布成功跳时光页（用户 2026-11-22 拍板）
+
+**① 轮换后再发布必 401「同步失败，口令过期」（用户实测：注册→发布→换 12 词→再发布）**。
+根因（客户端单侧）：`rotateIdentity` 用 `sessionFromIdentity` 构建新身份，而该函数
+`passKey` 留空是**注册**语义（注册时生成新种子声明给服务端）；轮换不是注册——服务端
+门种子 = 首次注册声明的 `user.pass_key`（rotate 端点不触碰，缺口 #10 终身不变量），
+④ 成功后 `_api.otpKey = _passKeyOf(新 ks)` 因 passKey 空错切**新公钥** → 客户端口令
+输入 ≠ 门种子 → 每请求 401「动态口令无效」→ 横幅「同步失败，口令过期」。§5.14 的
+「换钥全程零口令错位」只修了③期间时序，④后的种子断链漏了（curl 验收只验后端语义，
+客户端接入未复跑 E2E——诚实口径记录在案）。修复：
+
+- rotateIdentity 在 `sessionFromIdentity` 后把旧 keystore 的 `passKey` **原样带入**
+  新 keystore（手动字段拷贝，renameIdentity 同款先例；wrapNonce 空/非空两分支都
+  继承）——passKey = 每设备终身种子，跨轮换不变，与后端「rotate 不触碰 pass_key」
+  对齐；④ 后 `_passKeyOf` 恒等旧 passKey = 门种子。
+- 续跑路径（_resumeRotateIfAny）自动正确：keystore 在②已持久化（含 passKey），
+  401 回退条件 `passKey.isNotEmpty` 语义不变。
+- **中招设备恢复口径**：轮换已完成且新 keystore.passKey='' 的设备，本地已无法找回
+  旧 passKey → 装修复版后「注销账号 → 同注册名 + 新恢复词重新登录」——登录路径
+  `_register` 在 passKey 空时生成新种子并声明（DeviceService 注册声明制），门种子
+  随声明更新，OTP 恢复一致。
+
+**② 轮换支持自定义输入（用户拍板，§5.15「轮换仍自动生成」边界由本节推翻）**：
+
+- `rotateIdentity` 增 `customPhrase` 参数：非空则经 `validateImport`（§5.15 三态，
+  全词表仍查校验和）后作为新身份短语；空/缺省维持随机生成。会话层校验为防御性
+  （UI 已先校验）。
+- `showRotateIdentityDialog` 重排：确认弹窗内嵌**多行输入框**（默认空）+
+  「随机生成」按钮（填入 textarea）+ 提示文案（可随机或自定义 12 段，空格分隔、
+  区分大小写、词表词组合校验和仍生效）；开始更换 = 提交当前输入；轮换成功后维持
+  既有「新恢复词宫格 + 强制抄写确认」展示（自定义段按 12 段展示）。
+
+**③ 发布成功后跳时光页（用户拍板）**：
+
+- ComposePage 仅**新建发布**成功路径 `Navigator.pop(true)`（编辑保存/取消/删除不
+  带 result——跳转语义只属于「发布」）；草稿清除时序不变（pop 前完成）。
+- HomeShell._openCompose `await push<bool>` 收 result：true → `_switchTab(feed)`，
+  发布高亮（highlightDate）落在时光页首屏可见；从锁屏浮层打开的同路径生效。
+
+**边界**：①不改服务端（门种子语义原样）；②自定义轮换的熵强度自担（同 §5.15
+文案警示，轮换前确认弹窗已含抄写警示）；③仅新建发布跳转，编辑保存留在原页。
+
+**测试映射**：
+| 设计点 | 测试 |
+|---|---|
+| ①passKey 跨轮换 | identity_change_test：rotateIdentity 后会话 keystore.passKey == 旧值且拦截器输入源=passKey；轮换请求/重加密请求 otpKey 序列不出现新公钥 |
+| ②自定义轮换 | identity_change_test：rotateIdentity(customPhrase: 12 段任意) 成功且新公钥 = sessionFromIdentity(该短语) 公钥；无参调用仍随机（新公钥 ≠ 旧）；非法短语 FormatException |
+| ③跳转 | ui_smoke/demo：非时光 tab 打开发布 → 发布成功 → 时光 tab 可见；编辑模式保存不跳 |
