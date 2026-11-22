@@ -10,6 +10,7 @@ import '../../core/model/diary_entry.dart';
 import '../../core/session/app_session.dart';
 import '../../core/session/recovery_words.dart';
 import '../../core/util/errors.dart';
+import '../../widgets/identity_words_grid.dart';
 
 import '../../features/theme/tokens.dart';
 
@@ -1068,53 +1069,79 @@ Future<void> showRenameIdentityDialog(BuildContext context, WidgetRef ref) async
   );
 }
 
-/// 更换 12 词主密钥（晨 19 §5.4/§5.10；§5.16 支持随机/自定义双路径）：全量重加密；
-/// 成功后新词宫格展示，barrierDismissible=false 必须点「我已抄写」才可离开。
+/// 更换 12 词主密钥（晨 19 §5.4/§5.10；§5.16 随机/自定义双路径；§5.17 输入
+/// 形态与注册页一致=IdentityWordsGrid 12 宫格）：全量重加密；成功后新词宫格
+/// 展示，barrierDismissible=false 必须点「我已抄写」才可离开。
 Future<void> showRotateIdentityDialog(BuildContext context, WidgetRef ref) async {
-  // §5.16②：新密钥随机生成预填，可「随机生成」重掷或手动输入自定义 12 段
+  // 新密钥随机生成预填，可「随机生成」重掷或逐格手动输入自定义 12 段
   // （空格分隔、区分大小写；全词表组合仍校验抄写校验和——validateImport 三态）
-  final ctrl = TextEditingController(text: RecoveryWords.generate());
-  final phrase = await showDialog<String>(
+  var phrase = RecoveryWords.generate();
+  var ready = true; // 12 格非空才可开始更换（预填生成词 → 初始 ready）
+  final ok = await showDialog<bool>(
     context: context,
-    builder: (ctx) => AlertDialog(
-      title: const Text('更换 12 词主密钥'),
-      content: Column(
-        mainAxisSize: MainAxisSize.min,
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          const Text(
-              '新密钥把全部日记重加密（媒体无需重传）。可随机生成，也可手动输入'
-              ' 12 段自定义字符串（空格分隔、区分大小写）。\n\n'
-              '⚠ 旧恢复词立即作废；其他设备（持旧词）将无法再解密新数据。\n'
-              '请准备纸笔抄写。',
-              style: TextStyle(fontSize: 12, height: 1.6)),
-          const SizedBox(height: 10),
-          TextField(
-            controller: ctrl,
-            minLines: 2,
-            maxLines: 4,
-            decoration: const InputDecoration(
-              labelText: '新恢复词（12 词）或自定义 12 段',
-              hintText: '点击「随机生成」重掷，或手动输入',
+    builder: (ctx) => StatefulBuilder(
+      builder: (ctx, setD) => Dialog(
+        insetPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 24),
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxHeight: 560),
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(16, 18, 16, 8),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text('更换 12 词主密钥',
+                    style: TextStyle(
+                        fontSize: 17,
+                        fontWeight: FontWeight.w700,
+                        color: Tokens.label(Theme.of(ctx).brightness))),
+                const SizedBox(height: 8),
+                // GridView 不可过 AlertDialog 的内在宽度测量链（hasSize 断言）
+                // → 自绘 Dialog + Flexible 滚动区
+                Flexible(
+                  child: SingleChildScrollView(
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        const Text(
+                            '新密钥把全部日记重加密（媒体无需重传）。可随机生成，'
+                            '也可手动输入 12 段自定义字符串（空格分隔、区分大小写）。\n\n'
+                            '⚠ 旧恢复词立即作废；其他设备（持旧词）将无法再解密新数据。\n'
+                            '请准备纸笔抄写。',
+                            style: TextStyle(fontSize: 12, height: 1.6)),
+                        const SizedBox(height: 10),
+                        IdentityWordsGrid(
+                          initialPhrase: phrase,
+                          onChanged: (p) => setD(() {
+                            phrase = p;
+                            ready = RecoveryWords.canonicalPhrase(p) != null;
+                          }),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.end,
+                  children: [
+                    TextButton(
+                        onPressed: () => Navigator.pop(ctx),
+                        child: const Text('取消')),
+                    TextButton(
+                        onPressed:
+                            ready ? () => Navigator.pop(ctx, true) : null,
+                        child: const Text('开始更换')),
+                  ],
+                ),
+              ],
             ),
           ),
-        ],
-      ),
-      actions: [
-        TextButton(
-            onPressed: () => Navigator.pop(ctx), child: const Text('取消')),
-        TextButton.icon(
-          icon: const Icon(Icons.casino_outlined, size: 16),
-          onPressed: () => ctrl.text = RecoveryWords.generate(),
-          label: const Text('随机生成'),
         ),
-        TextButton(
-            onPressed: () => Navigator.pop(ctx, ctrl.text),
-            child: const Text('开始更换')),
-      ],
+      ),
     ),
   );
-  if (phrase == null || phrase.trim().isEmpty) return;
+  if (ok != true || phrase.trim().isEmpty) return;
   if (!context.mounted) return;
   String passcode = '';
   if (ref.read(appSessionProvider).lockEnabled) {

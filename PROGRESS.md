@@ -305,7 +305,9 @@
    - **③发布成功跳时光页**：ComposeRoute 泛型化（`ComposeRoute<T>`），新建发布成功 `pop(true)`（编辑保存/取消不带 result），HomeShell await push 收 true → `_switchTab(feed)`——发布高亮落时光页首屏，从任何 tab 发布都生效。
    - **测试 201 项全绿**（净增 3：换钥 passKey 保持/otpKey 断言并入全链路用例 + 自定义短语轮换 1 + 非法短语零状态变更 1 + 发布跳转 ui 1）、analyze 零告警。
 
-## 测试清单（`flutter test` 201 项全绿；后端未启动时 live 项自动 SKIP，就绪后 18 项全跑）
+20. **换钥输入与注册页一致化（§5.17，用户 2026-11-22 拍板「页面和注册的保持一致」，86052a5 设计先行）**：onboarding 创建页的宫格块上收为公共组件 `IdentityWordsGrid`（`lib/widgets/identity_words_grid.dart`）——3×4 序号格逐格输入（顺序即位置，整段粘贴到任意一格由 canonicalPhrase 空白归一兜住）+「随机生成 12 词 / 复制全部 12 词」（12 格非空才可复制）+ 派生密钥同屏（12 格非空即显 + 复制，`ValueKey('derived-key')` 锚点保留）；**校验不进组件**（短语经 onChanged 交调用方，会话层 validateImport 三态兜底）。注册页改用组件（删私有重复实现 ~200 行，提交流程 `_phrase` 由 onChanged 维护）；换钥弹窗 textarea 退役改用组件（`insetPadding` 收窄 16 使宫格宽度接近注册页；预填随机词；**12 格非空才可「开始更换」**；取消不执行）。工程点：GridView 过 AlertDialog 内在宽度测量链会撞 hasSize 断言 → 换钥弹窗用自绘 Dialog + Flexible 滚动区；组件按钮行 Row→Wrap（弹窗窄宽度自动换行不溢出）。既有测试锚点（13 TextField / derived-key / 随机生成文案）全保=注册页零改动等价回归。**测试 202 项全绿**（换钥宫格形态 ui 1 净增）、analyze 零告警。
+
+## 测试清单（`flutter test` 202 项全绿；后端未启动时 live 项自动 SKIP，就绪后 18 项全跑）
 
 - **golden 向量 9 项**（`test/core/e2ee/golden_test.dart`，02 §7 固化向量）：Argon2id masterKey、X25519 公钥推导（clamp）、sharedSecret、HKDF encKey、92B EncryptedCEK 字节布局、AES-GCM cipher+tag 布局、完整 JSON fixture 解密、确定性加密复现完整 JSON、随机往返。**一次实现全绿**，Dart 端与 Go 参考实现逐字节互通。
 - **恢复词 7 项**（`test/core/session/recovery_words_test.dart`）：BIP39 黄金向量（熵全 0 短语+seed，Node 互证）、生成多轮校验、抄写错误四类拒绝（换词/缺词/词表外/错序）、空白归一化、hex 判定、**diaryPass 动态口令向量（活后端实测）+窗口边界**。
@@ -337,6 +339,7 @@
 - **头像按需回落 3 项**（`test/features/avatar_pool_test.dart` 增补，§5.14）：urlForIndex（种子就绪/未启动/越界）、ensureIndex（下载原子入池/已有跳过/在途去重/失败静默）、渲染未命中挂载触发 ensure+命中不触发。
 - **换钥口令时序 2 项**（`test/features/identity_change_test.dart` 增补，§5.14）：③ 重加密期间口令钥恒定=passKey（replaceOtps 逐次捕获断言）；rotate 请求口令=passKey、改名不动口令种子。
 - **换钥 passKey 保持/自定义轮换 3 项**（`identity_change_test.dart` 增补，2026-11-22 §5.16）：轮换后 keystore.passKey==旧值且④后 otpKey=passKey（种子断链修复）；rotateIdentity(customPhrase) 三态校验+确定性（新公钥=短语派生）+非法短语零状态变更（无端点调用/无暂存残留）；发布跳时光页 1 项（`ui_smoke_test.dart` §5.16③）。
+- **换钥宫格形态 1 项**（`ui_smoke_test.dart`，2026-11-22 §5.17）：换钥弹窗=IdentityWordsGrid 12 宫格（与注册页同组件）+随机生成/复制+派生密钥同屏；清空任一格「开始更换」不可点；取消不执行轮换。
 - **光晕像素采样 2 项**（`test/features/glow_pixel_test.dart`；深色期望改为可见 Δ≥4 ≤48——用户覆盖原版 0.15）。
 - **头像池 9 项**（`test/features/avatar_pool_test.dart`，2026-11-18 §5.12 改造）：md5 黄金向量、indexFor、种子生成、批次下载（全落盘/幂等/失败重试封顶/原子写）、并发上限、Wi-Fi 门、pathFor 边界 + **渲染两分支（池命中 Image.file / 缺失默认人像占位 byIcon(Icons.person)）+ PoolProgress 进度断言（目录扫描初值/逐张递增）**。NetAvatar 3 项随组件删除（`git rm`）。
 - **live 集成 14 项**（`test/live/integration_live_test.dart`）：原 11 项回归（全程隐式验证 X-Diary-Pass）+ M3-12 动态口令 401 + M3-13 多设备共享 + M3-14 冒名拒绝。**2026-11-14 后端 v4 实测 14/14 全绿**（未启动自动 SKIP）。

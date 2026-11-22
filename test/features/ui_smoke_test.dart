@@ -265,8 +265,7 @@ void main() {
     expect(find.text('发布'), findsOneWidget);
   });
 
-  testWidgets('§5.16③：发布成功后跳回时光页（非时光 tab 发布同样生效）', (tester) async {
-    await _pumpHome(tester);
+  testWidgets('§5.16③：发布成功后跳回时光页（非时光 tab 发布同样生效）', (tester) async {    await _pumpHome(tester);
     // 切到日历 tab（确认身处非时光页）
     await tester.tap(find.byIcon(Icons.calendar_month_outlined),
         warnIfMissed: false);
@@ -286,6 +285,42 @@ void main() {
     expect(find.textContaining('本月'), findsNothing,
         reason: '日历页已卸载（HomeShell 切页即重建）');
     await tester.pump(const Duration(seconds: 3)); // toast Timer 走完
+  });
+
+  testWidgets('§5.17：换钥弹窗与注册页同宫格形态（12 宫格+随机生成+派生密钥）', (tester) async {
+    await _pumpHome(tester);
+    await tester.tap(find.byIcon(Icons.account_circle_outlined),
+        warnIfMissed: false);
+    await tester.pumpAndSettle();
+    await tester.scrollUntilVisible(find.text('更换 12 词主密钥'), 200,
+        scrollable: find.byType(Scrollable).last);
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('更换 12 词主密钥'), warnIfMissed: false);
+    await tester.pumpAndSettle(const Duration(milliseconds: 600));
+    final dialog = find.byType(Dialog);
+    // 宫格形态（与注册页同组件 IdentityWordsGrid）：随机生成/复制 + 派生密钥同屏
+    expect(find.text('随机生成 12 词'), findsOneWidget);
+    expect(find.text('复制全部 12 词'), findsOneWidget);
+    expect(find.byKey(const ValueKey('derived-key')), findsOneWidget,
+        reason: '预填生成词 → 派生密钥立现（§5.15）');
+    final cells = find.descendant(of: dialog, matching: find.byType(TextField));
+    expect(tester.widgetList(cells).length, 12, reason: '12 宫格');
+    // 清空第 1 格 → 「开始更换」不可点（12 格非空才可提交）
+    await tester.enterText(cells.first, '');
+    await tester.pumpAndSettle();
+    expect(
+        tester
+            .widget<TextButton>(
+                find.widgetWithText(TextButton, '开始更换'))
+            .onPressed,
+        isNull);
+    // 取消：不执行轮换（弹窗关闭，me 页入口行仍在）
+    await tester.tap(
+        find.descendant(of: dialog, matching: find.text('取消')),
+        warnIfMissed: false);
+    await tester.pumpAndSettle();
+    expect(find.byType(Dialog), findsNothing);
+    expect(find.text('更换 12 词主密钥'), findsOneWidget);
   });
 
   testWidgets('TagChip：同名标签同色（哈希稳定）', (tester) async {

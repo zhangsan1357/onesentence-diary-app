@@ -1,17 +1,16 @@
 // 首次身份引导（2026-11-14 后端身份模型 v4）：
 // create   = ①首次启动 · 生成身份：12 宫格直接输入恢复词（默认），下方可一键随机生成
-//            + 派生密钥同屏展示 + 注册名（终身不变，多设备共用）
+//            + 派生密钥同屏展示 + 注册名（终身不变，多设备共用）——宫格形态在
+//            IdentityWordsGrid 公共组件（§5.17，与更换主密钥弹窗同源）
 // login    = ②新设备登录：同一注册名 + 同一份身份凭证（12 词/12 段自定义/派生密钥）→ 校验 → 全量同步
 // nameOnly = 存量 keystore 一次性补设注册名（旧版身份接入多设备共享）
 // 身份凭证只在本页出现：创建/登录完成后，应用内任何页面不再显示恢复词与派生密钥。
 // 页面动作经回调注入（main.dart 接线会话层），自身不依赖存储，可独立 widget 测试。
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 
 import '../../core/api/api_client.dart';
-import '../../core/e2ee/bytes.dart';
-import '../../core/session/recovery_words.dart';
 import '../../core/util/errors.dart';
+import '../../widgets/identity_words_grid.dart';
 import '../theme/tokens.dart';
 
 enum OnboardingMode { create, login, nameOnly }
@@ -38,60 +37,17 @@ class _OnboardingPageState extends State<OnboardingPage> {
   late OnboardingMode _mode = widget.mode;
   final _name = TextEditingController();
   final _secret = TextEditingController();
-  // ① 12 宫格：默认逐格输入（顺序即位置），「随机生成」把 12 词填入各格
-  final _cells =
-      List<TextEditingController>.generate(12, (_) => TextEditingController());
+  // ① 12 宫格：形态在 IdentityWordsGrid 公共组件（§5.17，注册/换钥同源）——
+  // 拼接短语经 onChanged 维护到 _phrase（校验交会话层 validateImport）。
+  String _phrase = '';
   bool _busy = false;
-  bool _copied = false;
-  bool _copiedKey = false;
   String? _error;
 
   @override
   void dispose() {
     _name.dispose();
     _secret.dispose();
-    for (final c in _cells) {
-      c.dispose();
-    }
     super.dispose();
-  }
-
-  /// 创建身份实际使用的恢复词：逐格拼接（非法时原样交会话层报错）。
-  String get _effectivePhrase =>
-      _cells.map((c) => c.text.trim()).join(' ');
-
-  /// 随机生成 12 词填入宫格（生成后仍可逐格修改）。
-  void _regenerate() {
-    final words = RecoveryWords.generate().split(' ');
-    for (var i = 0; i < 12; i++) {
-      _cells[i].text = words[i];
-    }
-    setState(() {});
-  }
-
-  /// 派生密钥（= 恢复词的 SHA-256 seed hex）：12 段非空即显示（§5.15——自定义
-  /// 12 段没有校验和，派生密钥是唯一可核对的等价副本）。
-  String? get _derivedKey {
-    if (RecoveryWords.canonicalPhrase(_effectivePhrase) == null) return null;
-    return hexEncode(RecoveryWords.phraseToSeed(_effectivePhrase));
-  }
-
-  Future<void> _copyPhrase() async {
-    await Clipboard.setData(ClipboardData(text: _effectivePhrase));
-    if (!mounted) return;
-    setState(() => _copied = true);
-    await Future.delayed(const Duration(seconds: 2));
-    if (mounted && _copied) setState(() => _copied = false);
-  }
-
-  Future<void> _copyKey() async {
-    final key = _derivedKey;
-    if (key == null) return;
-    await Clipboard.setData(ClipboardData(text: key));
-    if (!mounted) return;
-    setState(() => _copiedKey = true);
-    await Future.delayed(const Duration(seconds: 2));
-    if (mounted && _copiedKey) setState(() => _copiedKey = false);
   }
 
   Future<void> _submit() async {
@@ -103,7 +59,7 @@ class _OnboardingPageState extends State<OnboardingPage> {
     try {
       switch (_mode) {
         case OnboardingMode.create:
-          await widget.onCreate!(_effectivePhrase, _name.text);
+          await widget.onCreate!(_phrase, _name.text);
         case OnboardingMode.login:
           await widget.onLogin!(_name.text, _secret.text);
         case OnboardingMode.nameOnly:
@@ -175,41 +131,7 @@ class _OnboardingPageState extends State<OnboardingPage> {
               '时校验和仍生效；自创密钥没有抄写校验保护，请点「复制」保存原文。',
         ),
         const SizedBox(height: 12),
-        _wordGrid(b),
-        // 宫格下方：随机生成 / 复制（12 词有效后才可复制）
-        Row(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            TextButton.icon(
-              onPressed: _busy ? null : _regenerate,
-              icon: Icon(Icons.casino_outlined,
-                  size: 15, color: Tokens.blue(b)),
-              label: Text('随机生成 12 词',
-                  style: TextStyle(fontSize: 13, color: Tokens.blue(b))),
-            ),
-            const SizedBox(width: 8),
-            TextButton.icon(
-              onPressed:
-                  (_busy || _derivedKey == null) ? null : _copyPhrase,
-              icon: Icon(
-                _copied ? Icons.check : Icons.copy_outlined,
-                size: 15,
-                color: _copied ? Tokens.green : Tokens.blue(b),
-              ),
-              label: Text(
-                _copied ? '已复制，请妥善保存' : '复制全部 12 词',
-                style: TextStyle(
-                    fontSize: 13,
-                    color: _copied
-                        ? Tokens.green
-                        : (_derivedKey == null
-                            ? Tokens.label3(b)
-                            : Tokens.blue(b))),
-              ),
-            ),
-          ],
-        ),
-        _keyBlock(b),
+        IdentityWordsGrid(onChanged: (p) => _phrase = p),
         const SizedBox(height: 8),
         Row(
           crossAxisAlignment: CrossAxisAlignment.start,
@@ -246,73 +168,6 @@ class _OnboardingPageState extends State<OnboardingPage> {
           ),
         ),
       ];
-
-  /// 派生密钥展示块：宫格 12 词有效即显示，实时随输入更新。
-  Widget _keyBlock(Brightness b) {
-    final key = _derivedKey;
-    return Container(
-      width: double.infinity,
-      padding: const EdgeInsets.all(12),
-      decoration: BoxDecoration(
-        color: Tokens.card(b),
-        borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: Tokens.sep(b)),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(
-            '派生密钥（与恢复词等价，登录新设备时任选其一）',
-            style: TextStyle(
-                fontSize: 11, fontWeight: FontWeight.w600, color: Tokens.label2(b)),
-          ),
-          const SizedBox(height: 6),
-          if (key == null)
-            Text('恢复词有效后自动生成',
-                style: TextStyle(fontSize: 12, color: Tokens.label3(b)))
-          else ...[
-            SelectableText(
-              key,
-              key: const ValueKey('derived-key'),
-              style: TextStyle(fontSize: 11, height: 1.5, color: Tokens.label(b)),
-            ),
-            const SizedBox(height: 8),
-            SizedBox(
-              height: 36,
-              child: Material(
-                color: Tokens.fill(b),
-                borderRadius: BorderRadius.circular(10),
-                child: InkWell(
-                  borderRadius: BorderRadius.circular(10),
-                  onTap: _copyKey,
-                  child: Center(
-                    child: Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        Icon(
-                          _copiedKey ? Icons.check : Icons.copy_outlined,
-                          size: 14,
-                          color: _copiedKey ? Tokens.green : Tokens.blue(b),
-                        ),
-                        const SizedBox(width: 6),
-                        Text(
-                          _copiedKey ? '已复制，请妥善保存' : '复制派生密钥',
-                          style: TextStyle(
-                              fontSize: 12,
-                              fontWeight: FontWeight.w600,
-                              color: _copiedKey ? Tokens.green : Tokens.blue(b)),
-                        ),
-                      ],
-                    ),
-                  ),
-                ),
-              ),
-            ),
-          ],
-        ],
-      ),
-    );
-  }
 
   // ---------- ② 新设备登录 ----------
   List<Widget> _loginBody(Brightness b) => [
@@ -374,73 +229,6 @@ class _OnboardingPageState extends State<OnboardingPage> {
           text,
           style: TextStyle(
               fontSize: 13, height: 1.6, color: Tokens.label2(b)),
-        ),
-      );
-
-  /// 12 宫格：逐格直接输入（顺序即位置），iOS 键盘「下一项」逐格跳转。
-  Widget _wordGrid(Brightness b) {
-    return Container(
-      padding: const EdgeInsets.all(12),
-      decoration: BoxDecoration(
-        color: Tokens.card(b),
-        borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: Tokens.sep(b)),
-      ),
-      child: Column(
-        children: [
-          GridView.count(
-            crossAxisCount: 3,
-            shrinkWrap: true,
-            physics: const NeverScrollableScrollPhysics(),
-            padding: EdgeInsets.zero,
-            mainAxisSpacing: 6,
-            crossAxisSpacing: 6,
-            childAspectRatio: 2.4,
-            children: [
-              for (var i = 0; i < 12; i++) _wordCellInput(b, i + 1, _cells[i]),
-            ],
-          ),
-          Padding(
-            padding: const EdgeInsets.only(top: 8),
-            child: Text('逐格按顺序输入；把整段恢复词粘贴到任意一格也可以',
-                style: TextStyle(fontSize: 11, color: Tokens.label3(b))),
-          ),
-        ],
-      ),
-    );
-  }
-
-  /// 手动输入格：序号可见（顺序即位置），iOS 键盘「下一项」逐格跳转。
-  Widget _wordCellInput(Brightness b, int n, TextEditingController ctrl) =>
-      Container(
-        padding: const EdgeInsets.symmetric(horizontal: 7),
-        alignment: Alignment.centerLeft,
-        decoration: BoxDecoration(
-          color: Tokens.fill(b),
-          borderRadius: BorderRadius.circular(10),
-        ),
-        child: Row(
-          children: [
-            Text('$n',
-                style: TextStyle(
-                    fontSize: 10,
-                    fontWeight: FontWeight.w600,
-                    color: Tokens.label3(b))),
-            const SizedBox(width: 5),
-            Expanded(
-              child: TextField(
-                controller: ctrl,
-                style: TextStyle(
-                    fontSize: 14,
-                    fontWeight: FontWeight.w600,
-                    color: Tokens.label(b)),
-                textInputAction:
-                    n < 12 ? TextInputAction.next : TextInputAction.done,
-                onChanged: (_) => setState(() {}),
-                decoration: const InputDecoration.collapsed(hintText: ''),
-              ),
-            ),
-          ],
         ),
       );
 
