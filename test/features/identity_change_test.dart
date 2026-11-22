@@ -229,6 +229,11 @@ void main() {
     final ks = (await keystoreSession()).keystore;
     expect(ks.publicKeyHex, fake.rotates.single.key);
     expect(ks.recoveryCode, newWords, reason: '恢复词=新 12 词');
+    expect(ks.passKey, passKey,
+        reason: '§5.16①：passKey 跨轮换保持——sessionFromIdentity 留空是注册'
+            '语义，轮换必须带入旧种子（否则④后门种子断链=每请求 401 口令过期）');
+    expect(fake.otpKey, passKey,
+        reason: '§5.16①：④ 后口令输入源=passKey（不再错切新公钥）');
     expect(fake.registers.length, regCount, reason: '走 rotate 端点，不再走 registerDevice');
     // KV 暂存清理
     final kv = await store.kvAll();
@@ -265,6 +270,40 @@ void main() {
         .media
         .single;
     expect(await session.mediaBytes(ref), original, reason: 'CEK 已重包裹为新钥');
+  });
+
+  test('§5.16②：自定义短语轮换——validateImport 三态 + 确定性 + passKey 保持', () async {
+    await bootstrap();
+    await session.publish(text: '一句', mood: null, tags: [], media: []);
+    await session.syncNow();
+    const custom =
+        '自家的 蓝鲸42 hello-world K3y 段落 猫与狗 sunrise7 楼下 密码学 Qw2x 九月 微风';
+    final expectedPub =
+        (await sessionFromIdentity(custom)).keystore.publicKeyHex;
+    final passKey = fake.registers.last.passKey!; // 首次注册声明的口令种子
+    final used = await session.rotateIdentity(customPhrase: custom);
+    expect(used, custom, reason: '返回实际使用的短语');
+    expect(fake.rotates.single.key, expectedPub,
+        reason: '新 userKey=自定义短语派生公钥（大小写敏感确定性）');
+    expect((await keystoreSession()).keystore.recoveryCode, custom,
+        reason: '恢复词=自定义 12 段原文');
+    expect(fake.rotates.single.otp, passKey);
+    expect((await keystoreSession()).keystore.passKey, passKey,
+        reason: '§5.16①：passKey 跨轮换保持');
+    expect(fake.otpKey, passKey,
+        reason: '§5.16①：④ 后口令输入源=passKey（修复后不再错切新公钥）');
+  });
+
+  test('§5.16②：自定义短语非法（≠12 段）→ FormatException 零状态变更', () async {
+    await bootstrap();
+    final oldPub = (await keystoreSession()).keystore.publicKeyHex;
+    await expectLater(session.rotateIdentity(customPhrase: '只有 三 段'),
+        throwsFormatException);
+    expect((await keystoreSession()).keystore.publicKeyHex, oldPub,
+        reason: '校验在身份构建前 → 零状态变更');
+    expect(fake.rotates, isEmpty, reason: '未触达 rotate 端点');
+    final kv = await store.kvAll();
+    expect(kv['cfg.rotateOld'], isNull, reason: '无暂存残留');
   });
 
   test('轮换中断续跑：replace 中途断 → 暂存在 → 续跑完成', () async {

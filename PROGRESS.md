@@ -299,7 +299,13 @@
 
 18. **身份支持「12 段任意非空字符串」（§5.15，用户 2026-11-20 拍板，5a844d1 设计先行）**：`RecoveryWords.validateImport` 三态判定——规范短语 ≠12 段报错（不变）/ 12 段全词表走严格 validate（**校验和抄写检出保留**）/ 含任一非词表段走任意模式（12 段非空即可、无校验和；seed = SHA-256(规范短语) 同一管线、黄金向量钉死；**大小写敏感**）。`sessionFromIdentity`/`createIdentity` 接线（首次随机生成行为不变）；onboarding 派生密钥展示放宽为「12 段非空即显」（自定义身份无校验和，派生密钥=唯一可核对等价副本）+ 创建页「自创密钥无校验保护」警示；登录格式描述文案统一（onboarding 登录页 + me 页新设备登录弹窗 + 注销弹窗——设计中写「换钥确认弹窗」，实际第四个描述登录格式的面是注销弹窗，语义一致）；轮换仍**自动生成**词表词（生成=唯一可信熵源，自定义轮换另议）；服务端契约零变化。关键设计论证：仅登录侧放行是死代码（身份只能在本应用创建），创建+登录必须同改。**测试 198 项全绿**（validateImport 三态组 7 + 自定义段确定性 1 净增）、analyze 零告警。
 
-## 测试清单（`flutter test` 198 项全绿；后端未启动时 live 项自动 SKIP，就绪后 18 项全跑）
+19. **轮换后「口令过期」真 bug 修复 + 轮换自定义输入 + 发布跳时光页（§5.16，用户 2026-11-22 拍板，ab91a44 设计先行）**：
+   - **①换钥后再发布必 401「同步失败，口令过期」（用户实测：注册→发布→换 12 词→再发布）**：根因 = rotateIdentity 用 sessionFromIdentity 造新 keystore（passKey 留空=**注册**语义），④ 成功后 `_api.otpKey` 错切新公钥，而服务端门种子 = 首次注册声明的 `user.pass_key`（rotate 端点不触碰）→ 客户端口令输入 ≠ 门种子 → 每请求 401。§5.14 只修了③期间时序，④后种子断链漏掉（curl 只验后端语义，客户端接入未复跑 E2E——诚实口径）。修复 = 旧 passKey 原样带入新 keystore（手动字段拷贝，wrapNonce 空/非空两分支都继承）；续跑路径 keystore 已含 passKey 自动正确。**中招设备恢复口径**：装修复版后「注销账号 → 同注册名+新恢复词重新登录」（`_register` 空 passKey 时生成新种子声明，门种子随声明更新）。
+   - **②轮换支持自定义输入**（§5.15「轮换仍自动生成」边界由用户拍板推翻）：rotateIdentity 增 `customPhrase` 参数（validateImport 三态校验在身份构建前=非法时零状态变更）；换钥弹窗改「随机生成（预填/重掷）+ 手动输入」textarea 双路径，成功后维持宫格强制抄写展示。
+   - **③发布成功跳时光页**：ComposeRoute 泛型化（`ComposeRoute<T>`），新建发布成功 `pop(true)`（编辑保存/取消不带 result），HomeShell await push 收 true → `_switchTab(feed)`——发布高亮落时光页首屏，从任何 tab 发布都生效。
+   - **测试 201 项全绿**（净增 3：换钥 passKey 保持/otpKey 断言并入全链路用例 + 自定义短语轮换 1 + 非法短语零状态变更 1 + 发布跳转 ui 1）、analyze 零告警。
+
+## 测试清单（`flutter test` 201 项全绿；后端未启动时 live 项自动 SKIP，就绪后 18 项全跑）
 
 - **golden 向量 9 项**（`test/core/e2ee/golden_test.dart`，02 §7 固化向量）：Argon2id masterKey、X25519 公钥推导（clamp）、sharedSecret、HKDF encKey、92B EncryptedCEK 字节布局、AES-GCM cipher+tag 布局、完整 JSON fixture 解密、确定性加密复现完整 JSON、随机往返。**一次实现全绿**，Dart 端与 Go 参考实现逐字节互通。
 - **恢复词 7 项**（`test/core/session/recovery_words_test.dart`）：BIP39 黄金向量（熵全 0 短语+seed，Node 互证）、生成多轮校验、抄写错误四类拒绝（换词/缺词/词表外/错序）、空白归一化、hex 判定、**diaryPass 动态口令向量（活后端实测）+窗口边界**。
@@ -330,6 +336,7 @@
 - **FaceID 自愈与 face 改口令 2 项**（`test/core/session/bio_unlock_test.dart` 增补，§5.14）：ui.bio=1 钥匙串失效 → 口令解锁成功即静默重存（下次面容恢复可用）；rekeyWithBio 生物识别通过免旧口令重包裹、未通过/设备不可用/口令过短拒绝。
 - **头像按需回落 3 项**（`test/features/avatar_pool_test.dart` 增补，§5.14）：urlForIndex（种子就绪/未启动/越界）、ensureIndex（下载原子入池/已有跳过/在途去重/失败静默）、渲染未命中挂载触发 ensure+命中不触发。
 - **换钥口令时序 2 项**（`test/features/identity_change_test.dart` 增补，§5.14）：③ 重加密期间口令钥恒定=passKey（replaceOtps 逐次捕获断言）；rotate 请求口令=passKey、改名不动口令种子。
+- **换钥 passKey 保持/自定义轮换 3 项**（`identity_change_test.dart` 增补，2026-11-22 §5.16）：轮换后 keystore.passKey==旧值且④后 otpKey=passKey（种子断链修复）；rotateIdentity(customPhrase) 三态校验+确定性（新公钥=短语派生）+非法短语零状态变更（无端点调用/无暂存残留）；发布跳时光页 1 项（`ui_smoke_test.dart` §5.16③）。
 - **光晕像素采样 2 项**（`test/features/glow_pixel_test.dart`；深色期望改为可见 Δ≥4 ≤48——用户覆盖原版 0.15）。
 - **头像池 9 项**（`test/features/avatar_pool_test.dart`，2026-11-18 §5.12 改造）：md5 黄金向量、indexFor、种子生成、批次下载（全落盘/幂等/失败重试封顶/原子写）、并发上限、Wi-Fi 门、pathFor 边界 + **渲染两分支（池命中 Image.file / 缺失默认人像占位 byIcon(Icons.person)）+ PoolProgress 进度断言（目录扫描初值/逐张递增）**。NetAvatar 3 项随组件删除（`git rm`）。
 - **live 集成 14 项**（`test/live/integration_live_test.dart`）：原 11 项回归（全程隐式验证 X-Diary-Pass）+ M3-12 动态口令 401 + M3-13 多设备共享 + M3-14 冒名拒绝。**2026-11-14 后端 v4 实测 14/14 全绿**（未启动自动 SKIP）。

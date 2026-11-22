@@ -1633,14 +1633,41 @@ class AppSession extends Notifier<AppState> {
   /// 序（§5.4 修正版，中断安全）：① 新词→新键对 ② keystore 先重写为新身份 +
   /// 旧私钥 ECIES 暂存（cfg.rotateOld）+ 进度（cfg.rotateDone）③ 逐条目重加密
   /// replaceEntry（幂等续跑）④ rotate 端点换 userKey 换 token ⑤ 清暂存。
-  /// [passcode]：锁定开启时必传（新私钥按同口令重包裹）。返回新 12 词。
-  Future<String> rotateIdentity({String passcode = ''}) async {
+  /// [passcode]：锁定开启时必传（新私钥按同口令重包裹）。
+  /// [customPhrase]：自定义新身份短语（§5.16，validateImport 三态；空/缺省=随机
+  /// 生成）。返回实际使用的新 12 段短语。
+  Future<String> rotateIdentity({String passcode = '', String? customPhrase}) async {
     if (_demo) throw StateError('演示模式不支持身份变更');
     final s = _session;
     if (s == null) throw StateError('未解锁');
     await syncNow(); // 先冲正：在途暂存媒体引用是旧钥包裹，轮换窗口内不可冲正
-    final newWords = RecoveryWords.generate();
-    final newSess = await sessionFromIdentity(newWords, userId: s.keystore.userId);
+    final custom = customPhrase?.trim();
+    final newWords = (custom != null && custom.isNotEmpty)
+        ? custom
+        : RecoveryWords.generate();
+    // 自定义三态校验（§5.15）：≠12 段/全词表校验和错在此先抛 = 零状态变更；
+    // 生成词恒过（防御性）。
+    RecoveryWords.validateImport(newWords);
+    final newSess0 =
+        await sessionFromIdentity(newWords, userId: s.keystore.userId);
+    // §5.16①：passKey 跨轮换保持——sessionFromIdentity 留空是「注册」语义
+    // （注册时生成新种子声明给服务端），轮换不是注册：门种子=首次注册声明的
+    // user.pass_key（rotate 端点不触碰），不带入则④后 otpKey 错切新公钥 →
+    // 每请求 401「动态口令无效」→ 横幅「同步失败，口令过期」（真机实测）。
+    final newSess = UnlockedSession(
+      keystore: KeystoreData(
+        saltB64: newSess0.keystore.saltB64,
+        wrappedPrivB64: newSess0.keystore.wrappedPrivB64,
+        wrapNonceB64: newSess0.keystore.wrapNonceB64,
+        publicKeyHex: newSess0.keystore.publicKeyHex,
+        deviceNo: newSess0.keystore.deviceNo,
+        userId: newSess0.keystore.userId,
+        recoveryCode: newSess0.keystore.recoveryCode,
+        passKey: s.keystore.passKey,
+      ),
+      privateKey: newSess0.privateKey,
+      publicKey: newSess0.publicKey,
+    );
     KeystoreData ks;
     if (s.keystore.wrapNonceB64.isNotEmpty) {
       if (passcode.isEmpty) throw ArgumentError('锁定开启：换主密钥需口令');

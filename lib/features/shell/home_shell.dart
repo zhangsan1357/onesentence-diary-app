@@ -29,7 +29,10 @@ class _HomeShellState extends ConsumerState<HomeShell> {
   void _switchTab(HomeTab t) => setState(() => _tab = t);
 
   Future<void> _openCompose() async {
-    await Navigator.of(context).push(ComposeRoute());
+    // §5.16③：新建发布成功（result=true）→ 跳时光页，发布高亮首屏可见；
+    // 取消/编辑保存 result 为空不跳
+    final published = await Navigator.of(context).push(ComposeRoute<bool>());
+    if (published == true && mounted) _switchTab(HomeTab.feed);
   }
 
   Widget _pageFor(HomeTab t) => switch (t) {

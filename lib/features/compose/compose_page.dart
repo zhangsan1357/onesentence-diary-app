@@ -16,7 +16,7 @@ import '../../core/util/errors.dart';
 import '../../features/theme/tokens.dart';
 import '../../widgets/common.dart';
 
-class ComposeRoute extends PageRouteBuilder {
+class ComposeRoute<T> extends PageRouteBuilder<T> {
   final DiaryEntry? editEntry; // 非空 = 长按编辑模式
 
   ComposeRoute({this.editEntry})
@@ -237,7 +237,9 @@ class _ComposePageState extends ConsumerState<ComposePage> {
       }
       // 本地已落库（离线队列保证最终推云）→ 草稿使命完成（§4.12）
       await ref.read(appSessionProvider.notifier).clearDraft(_draftKey);
-      if (mounted) Navigator.of(context).pop();
+      // §5.16③：新建发布成功带 result=true——HomeShell 收到后跳时光页
+      // （发布高亮落在首屏）；编辑保存不带 result，留在原页
+      if (mounted) Navigator.of(context).pop(_isEdit ? null : true);
     } catch (e) {
       _show(_isEdit ? '保存失败：${friendlyError(e)}' : '发布失败：${friendlyError(e)}');
     } finally {

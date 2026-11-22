@@ -265,6 +265,29 @@ void main() {
     expect(find.text('发布'), findsOneWidget);
   });
 
+  testWidgets('§5.16③：发布成功后跳回时光页（非时光 tab 发布同样生效）', (tester) async {
+    await _pumpHome(tester);
+    // 切到日历 tab（确认身处非时光页）
+    await tester.tap(find.byIcon(Icons.calendar_month_outlined),
+        warnIfMissed: false);
+    await tester.pumpAndSettle();
+    expect(find.textContaining('本月'), findsOneWidget); // 日历统计卡在
+    // FAB 打开发布页 → 输入正文 → 发布
+    await tester.tap(find.byIcon(Icons.edit).last, warnIfMissed: false);
+    await tester.pumpAndSettle(const Duration(milliseconds: 600));
+    await tester.enterText(
+        find.widgetWithText(TextField, '今天怎么样？写点什么……'), '发布后跳时光的一条');
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('发布'), warnIfMissed: false);
+    await tester.pumpAndSettle(const Duration(seconds: 1));
+    // 发布页已关 + 落在时光 tab：新条目在 feed 首屏可见
+    expect(find.text('写一条'), findsNothing, reason: '发布页已关闭');
+    expect(find.textContaining('发布后跳时光的一条'), findsOneWidget);
+    expect(find.textContaining('本月'), findsNothing,
+        reason: '日历页已卸载（HomeShell 切页即重建）');
+    await tester.pump(const Duration(seconds: 3)); // toast Timer 走完
+  });
+
   testWidgets('TagChip：同名标签同色（哈希稳定）', (tester) async {
     await tester.pumpWidget(const MaterialApp(
       home: Scaffold(body: Center(child: TagChip('工作'))),
